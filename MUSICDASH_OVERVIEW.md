@@ -25,6 +25,8 @@ This started as a way to replace a tedious manual ritual (export → upload → 
 **🎯 Current Taste Profile**
 A living snapshot of your musical identity — strong genres, emerging genres you're drifting toward, the artists that define your current sound, and things to actively avoid. Updated by an AI reviewer that studies your actual listening data, not guesswork.
 
+![Current Taste Profile tab](screenshots/current-taste.png)
+
 **💡 Playlist Ideas, on tap**
 Fresh playlist concepts generated from your real taste profile — each one a single click away from becoming an actual Spotify playlist, fully populated with real tracks. Don't like one? Dismiss it. Want a different crop of songs for the same idea? Regenerate it. Want a brand new idea you haven't seen yet? Just ask for one.
 
@@ -37,14 +39,22 @@ The system doesn't just suggest a genre to explore next — it teaches you about
 **💬 Ask anything**
 A genuine conversation with your own listening history. "What was I obsessed with the week before I started seeing her?" "How has my listening changed in the last month?" Ask in plain English, get a real, specific answer pulled from your actual data — not a guess.
 
+![Ask tab](screenshots/ask.png)
+
 **🛍️ From streaming to shelf**
 See which albums you've been loving on Spotify and instantly check what's available to buy on vinyl — with smart recommendations for what to buy next, based on what you're actually playing, not generic bestseller lists.
+
+![Purchase tab](screenshots/purchase.png)
 
 **📀 Your collection, live**
 A direct window into your real Discogs collection — browse, rate, organize, and add to it right from the dashboard, no tab-switching required.
 
+![Collection tab](screenshots/collection.png)
+
 **📰 Live scrobble feed**
 See exactly what you've listened to today, this week, this month — in a clean, simple list. No digging through Last.fm's interface.
+
+![Recent tab](screenshots/recent.png)
 
 **📈 Genre trends over time**
 Watch your taste actually evolve — which genres are growing, which are fading, charted out so the shift is visible instead of just felt.
