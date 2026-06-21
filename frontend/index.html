@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MusicDash</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  nav a { margin-right: 1rem; text-decoration: none; color: #555; }
+  nav a.active { color: #111; font-weight: 600; }
+  h1 { margin-bottom: 0.2rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0 1.5rem; }
+  .chip { background: #eee; border-radius: 12px; padding: 0.25rem 0.75rem; font-size: 0.85rem; }
+  .chip.avoid { background: #fdecea; color: #a33; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 0.5rem; }
+  .card b { display: block; margin-bottom: 0.25rem; }
+  .empty { color: #888; font-style: italic; }
+  section { margin-bottom: 2rem; }
+  .card .row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+  .card button { padding: 0.3rem 0.8rem; cursor: pointer; flex-shrink: 0; }
+  .card .idea-status { display: block; font-size: 0.85rem; margin-top: 0.4rem; color: #666; }
+  .card .idea-status a { color: #2a6; }
+  .card .idea-status ul { margin: 0.3rem 0 0; padding-left: 1.2rem; }
+  .card .idea-status summary { cursor: pointer; margin-top: 0.3rem; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/" class="active">Current Taste</a>
+  <a href="/genres">Genre Trends</a>
+  <a href="/artists">Top Artists</a>
+  <a href="/reviews">Reviews</a>
+  <a href="/playlists">Playlists</a>
+  <a href="/purchase">Purchase</a>
+  <a href="/collection">Collection</a>
+  <a href="/ask">Ask</a>
+  <a href="/recent">Recent</a>
+</nav>
+<h1>Current Taste Profile</h1>
+<button id="refresh-all">Refresh Everything</button><span id="refresh-status"></span>
+<div id="content" class="empty">Loading...</div>
+
+<script>
+async function load() {
+  const el = document.getElementById('content');
+  try {
+    const res = await fetch('/api/taste-profile/current');
+    if (!res.ok) {
+      el.innerHTML = '<p class="empty">No taste profile ingested yet. Run /music-review first.</p>';
+      return;
+    }
+    const p = await res.json();
+    el.innerHTML = `
+      <section>
+        <h2>Signals</h2>
+        <p>${p.current_taste_signals || '<span class="empty">none</span>'}</p>
+      </section>
+      <section>
+        <h2>Strong / Primary Genres</h2>
+        <div class="chips">${p.strong_genres.map(g => `<span class="chip">${g}</span>`).join('') || '<span class="empty">none</span>'}</div>
+      </section>
+      <section>
+        <h2>Emerging / Adjacent Genres</h2>
+        <div class="chips">${p.emerging_genres.map(g => `<span class="chip">${g}</span>`).join('') || '<span class="empty">none</span>'}</div>
+      </section>
+      <section>
+        <h2>Defining Artists</h2>
+        <div class="chips">${p.defining_artists.map(a => `<span class="chip">${a}</span>`).join('') || '<span class="empty">none</span>'}</div>
+      </section>
+      <section>
+        <h2>Things To Avoid</h2>
+        <div class="chips">${p.things_to_avoid.map(a => `<span class="chip avoid">${a}</span>`).join('') || '<span class="empty">none</span>'}</div>
+      </section>
+      <section>
+        <h2>Playlist Ideas</h2>
+        <button id="generate-idea">Generate New Idea</button><span id="generate-idea-status"></span>
+        ${p.playlist_ideas.map((i, idx) => `
+          <div class="card">
+            <div class="row">
+              <div><b>${i.title}</b>${i.description}</div>
+              <div style="display:flex; gap:0.4rem; flex-shrink:0;">
+                <button class="create-playlist" data-idx="${idx}">Create on Spotify</button>
+                <button class="regenerate-playlist" data-idx="${idx}">Regenerate</button>
+                <button class="dismiss-idea" data-idx="${idx}">Dismiss</button>
+              </div>
+            </div>
+            <span class="idea-status" id="idea-status-${idx}"></span>
+          </div>
+        `).join('') || '<span class="empty">none</span>'}
+        <details>
+          <summary>Dismissed ideas</summary>
+          <div id="dismissed-ideas" class="empty">Loading...</div>
+        </details>
+      </section>
+      <section>
+        <h2>Next Field Trip Genre</h2>
+        ${p.next_field_trip_genre ? `
+          <div class="card">
+            <div class="row">
+              <b>${p.next_field_trip_genre}</b>
+              <div style="display:flex; gap:0.4rem; flex-shrink:0;">
+                <button id="load-genre-primer">Tell Me More</button>
+                <button id="try-genre-playlist">${p.next_field_trip_playlist ? 'Try Again' : 'Try This'}</button>
+              </div>
+            </div>
+            <div id="genre-playlist-link">${p.next_field_trip_playlist ? `<a href="${p.next_field_trip_playlist.playlist_url}" target="_blank" rel="noopener">Open in Spotify</a>` : ''}</div>
+            <ul id="genre-playlist-tracks"></ul>
+            <div id="genre-primer"></div>
+            <span class="idea-status" id="genre-playlist-status"></span>
+          </div>
+        ` : '<p class="empty">none</p>'}
+      </section>
+      <section>
+        <h2>Playlist Health</h2>
+        <div id="strategy-stats" class="empty">Loading search strategy stats...</div>
+        <button id="run-audit">Audit All Playlist-Idea Tracks</button><span id="audit-status"></span>
+        <div id="audit-results"></div>
+      </section>
+    `;
+
+    el.querySelectorAll('.create-playlist').forEach(btn => {
+      btn.addEventListener('click', () => createPlaylistFromIdea(p.playlist_ideas[btn.dataset.idx], btn));
+    });
+    el.querySelectorAll('.regenerate-playlist').forEach(btn => {
+      btn.addEventListener('click', () => regeneratePlaylistFromIdea(p.playlist_ideas[btn.dataset.idx], btn));
+    });
+    el.querySelectorAll('.dismiss-idea').forEach(btn => {
+      btn.addEventListener('click', () => dismissIdea(p.playlist_ideas[btn.dataset.idx], btn));
+    });
+    document.getElementById('generate-idea').addEventListener('click', generateNewIdea);
+    document.getElementById('run-audit').addEventListener('click', runAudit);
+    if (p.next_field_trip_genre) {
+      document.getElementById('load-genre-primer').addEventListener('click', () => loadGenrePrimer(p.next_field_trip_genre));
+      document.getElementById('try-genre-playlist').addEventListener('click', () => tryGenrePlaylist(p.next_field_trip_genre, !!p.next_field_trip_playlist));
+      if (p.next_field_trip_playlist) {
+        loadGenrePlaylistTracks(p.next_field_trip_genre);
+      }
+    }
+    loadStrategyStats();
+    loadDismissedIdeas();
+  } catch (e) {
+    el.innerHTML = '<p class="empty">Failed to load taste profile.</p>';
+  }
+}
+
+async function loadStrategyStats() {
+  const el = document.getElementById('strategy-stats');
+  try {
+    const res = await fetch('/api/spotify/playlists/strategy-stats');
+    const data = await res.json();
+    const cats = data.categories || {};
+    const order = ['seed_artist', 'similar_artist', 'genre_tag', 'text_match'];
+    const rows = order.filter(c => cats[c]).map(c => {
+      const s = cats[c];
+      const pct = Math.round(s.rejection_rate * 100);
+      const flag = s.disabled ? ' — DISABLED (too many rejections)' : '';
+      return `<li>${c}: ${pct}% rejected (${s.rejected}/${s.total})${flag}</li>`;
+    }).join('');
+    el.innerHTML = rows
+      ? `<ul>${rows}</ul>`
+      : '<span class="empty">No playlist-idea track history yet.</span>';
+  } catch (e) {
+    el.innerHTML = '<span class="empty">Failed to load strategy stats.</span>';
+  }
+}
+
+async function runAudit() {
+  const btn = document.getElementById('run-audit');
+  const status = document.getElementById('audit-status');
+  const results = document.getElementById('audit-results');
+  btn.disabled = true;
+  status.textContent = 'Auditing... (re-checks every logged track against current rules)';
+  results.innerHTML = '';
+  try {
+    const res = await fetch('/api/spotify/playlists/audit');
+    const data = await res.json();
+    if (res.status === 401 && data.auth_url) {
+      status.innerHTML = `Spotify isn't connected yet. <a href="${data.auth_url}" target="_blank" rel="noopener">Connect Spotify</a>.`;
+      return;
+    }
+    if (!res.ok) {
+      status.textContent = `Error: ${data.detail || 'audit failed'}`;
+      return;
+    }
+    if (!data.flagged.length) {
+      status.textContent = 'Clean — nothing flagged.';
+      return;
+    }
+    status.textContent = `${data.count} suspect track${data.count === 1 ? '' : 's'} found:`;
+    results.innerHTML = data.flagged.map((f, idx) => `
+      <div class="card">
+        <div class="row">
+          <div>
+            <b>${f.track_name} — ${f.artist_name}</b>
+            <span class="empty">"${f.idea_title}": ${f.suspect_reason}</span>
+          </div>
+          <button class="audit-remove" data-idx="${idx}">Remove from playlist</button>
+        </div>
+        <span class="idea-status" id="audit-remove-status-${idx}"></span>
+      </div>
+    `).join('');
+    results.querySelectorAll('.audit-remove').forEach(b => {
+      b.addEventListener('click', () => removeAuditTrack(data.flagged[b.dataset.idx], b));
+    });
+  } catch (e) {
+    status.textContent = 'Audit failed.';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function removeAuditTrack(flag, btn) {
+  const status = document.getElementById(`audit-remove-status-${btn.dataset.idx}`);
+  btn.disabled = true;
+  status.textContent = 'Removing...';
+  try {
+    const res = await fetch('/api/spotify/playlists/audit/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idea_title: flag.idea_title, track_uri: flag.track_uri }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      status.textContent = `Error: ${data.detail || 'failed to remove'}`;
+      btn.disabled = false;
+      return;
+    }
+    status.textContent = 'Removed.';
+    btn.closest('.card').style.opacity = '0.5';
+    loadStrategyStats();
+  } catch (e) {
+    status.textContent = 'Failed to remove.';
+    btn.disabled = false;
+  }
+}
+
+async function createPlaylistFromIdea(idea, btn) {
+  const status = document.getElementById(`idea-status-${btn.dataset.idx}`);
+  btn.disabled = true;
+  status.textContent = 'Creating...';
+  try {
+    const res = await fetch('/api/spotify/playlists/from-idea', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: idea.title, description: idea.description || '' }),
+    });
+    const data = await res.json();
+    if (res.status === 401 && data.auth_url) {
+      status.innerHTML = `Spotify isn't connected yet. <a href="${data.auth_url}" target="_blank" rel="noopener">Connect Spotify</a>, then click Create again.`;
+      return;
+    }
+    if (!res.ok) {
+      status.textContent = `Error: ${data.detail || 'failed to create playlist'}`;
+      return;
+    }
+    const verb = data.reused_existing_playlist ? 'Updated' : 'Created';
+    const tracksList = (data.tracks || []).map(t =>
+      `<li>${t.name} — ${t.artist} <span class="empty">(${Math.round(t.confidence * 100)}% confidence — ${t.reason})</span></li>`
+    ).join('');
+    const excludedNote = (data.excluded_rejected_artists || []).length
+      ? `<br>Skipped previously-removed artists: ${data.excluded_rejected_artists.join(', ')}`
+      : '';
+    const disabledNote = (data.disabled_categories || []).length
+      ? `<br>Search strategies currently disabled (too many past rejections): ${data.disabled_categories.join(', ')}`
+      : '';
+    status.innerHTML = `
+      ${verb} playlist, added ${data.track_count} new track${data.track_count === 1 ? '' : 's'}.
+      <a href="${data.playlist_url}" target="_blank" rel="noopener">Open in Spotify</a>${excludedNote}${disabledNote}
+      ${tracksList ? `<details><summary>Why these tracks?</summary><ul>${tracksList}</ul></details>` : ''}
+    `;
+  } catch (e) {
+    status.textContent = 'Failed to create playlist.';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function removeFlaggedTrack(track, btn) {
+  const status = document.getElementById(`flagged-remove-status-${btn.dataset.idx}`);
+  btn.disabled = true;
+  status.textContent = 'Removing...';
+  try {
+    const res = await fetch('/api/spotify/playlists/audit/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idea_title: track.idea_title, track_uri: track.uri }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      status.textContent = `Error: ${data.detail || 'failed to remove'}`;
+      btn.disabled = false;
+      return;
+    }
+    status.textContent = 'Removed.';
+    btn.closest('.card').style.opacity = '0.5';
+  } catch (e) {
+    status.textContent = 'Failed to remove.';
+    btn.disabled = false;
+  }
+}
+
+function renderGenreTracks(tracks) {
+  const el = document.getElementById('genre-playlist-tracks');
+  el.innerHTML = tracks.length
+    ? tracks.map(t => `<li>${t.name} — ${t.artist}</li>`).join('')
+    : '<li class="empty">No tracks yet.</li>';
+}
+
+async function loadGenrePlaylistTracks(genre) {
+  try {
+    const res = await fetch(`/api/spotify/playlists/field-trip-tracks?genre_note=${encodeURIComponent(genre)}`);
+    const data = await res.json();
+    if (!res.ok) return;
+    renderGenreTracks(data.tracks || []);
+  } catch (e) {
+    // leave the tracklist empty — "Open in Spotify" link still works
+  }
+}
+
+async function loadGenrePrimer(genre) {
+  const el = document.getElementById('genre-primer');
+  const btn = document.getElementById('load-genre-primer');
+  btn.disabled = true;
+  el.innerHTML = '<p class="empty">Looking this one up...</p>';
+  try {
+    const res = await fetch(`/api/genre-primer?genre=${encodeURIComponent(genre)}`);
+    const data = await res.json();
+    if (!res.ok) {
+      el.innerHTML = `<p class="empty">Error: ${data.detail || 'failed to load genre primer'}</p>`;
+      return;
+    }
+    const sourceNote = data.source === 'wikipedia'
+      ? `<a href="${data.source_url}" target="_blank" rel="noopener">Wikipedia</a>`
+      : '<span class="empty">(no Wikipedia article found — generated from general knowledge)</span>';
+    el.innerHTML = `
+      <p>${data.history_text} ${sourceNote}</p>
+      <p><b>Key artists:</b></p>
+      <div class="chips">${data.key_artists.map(a => `<span class="chip">${a}</span>`).join('')}</div>
+      <p><b>Sonic signatures:</b></p>
+      <ul>${data.sonic_signatures.map(s => `<li>${s}</li>`).join('')}</ul>
+    `;
+  } catch (e) {
+    el.innerHTML = '<p class="empty">Failed to load genre primer.</p>';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function tryGenrePlaylist(genre, hasExisting) {
+  const btn = document.getElementById('try-genre-playlist');
+  const status = document.getElementById('genre-playlist-status');
+  btn.disabled = true;
+  status.textContent = hasExisting ? 'Clearing current tracks and searching fresh...' : 'Creating playlist...';
+  try {
+    const url = hasExisting
+      ? '/api/spotify/playlists/from-genre-note/regenerate'
+      : '/api/spotify/playlists/from-genre-note';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ genre_note: genre }),
+    });
+    const data = await res.json();
+    if (res.status === 401 && data.auth_url) {
+      status.innerHTML = `Spotify isn't connected yet. <a href="${data.auth_url}" target="_blank" rel="noopener">Connect Spotify</a>, then click Try This again.`;
+      return;
+    }
+    if (!res.ok) {
+      status.textContent = `Error: ${data.detail || 'failed to create playlist'}`;
+      return;
+    }
+    const reviewErrorNote = data.second_opinion_error
+      ? `<br><span class="empty">Second-opinion review failed: ${data.second_opinion_error}</span>`
+      : '';
+    status.innerHTML = `Added ${data.track_count} track${data.track_count === 1 ? '' : 's'}.${reviewErrorNote}`;
+    document.getElementById('genre-playlist-link').innerHTML =
+      `<a href="${data.playlist_url}" target="_blank" rel="noopener">Open in Spotify</a>`;
+    renderGenreTracks(data.tracks || []);
+    btn.textContent = 'Try Again';
+
+    const flagged = data.second_opinion_flagged || [];
+    if (flagged.length) {
+      status.innerHTML += `<p><b>Second opinion flagged ${flagged.length} track${flagged.length === 1 ? '' : 's'} for review:</b></p>` +
+        flagged.map((t, idx) => `
+          <div class="card">
+            <div class="row">
+              <div>
+                <b>${t.name} — ${t.artist}</b>
+                <span class="empty">${t.second_opinion_reason}</span>
+              </div>
+              <button class="flagged-remove" data-idx="${idx}">Remove from playlist</button>
+            </div>
+            <span class="idea-status" id="flagged-remove-status-${idx}"></span>
+          </div>
+        `).join('');
+      status.querySelectorAll('.flagged-remove').forEach(b => {
+        b.addEventListener('click', () => removeFlaggedTrack(flagged[b.dataset.idx], b));
+      });
+    }
+  } catch (e) {
+    status.textContent = 'Failed to create playlist.';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function generateNewIdea() {
+  const btn = document.getElementById('generate-idea');
+  const status = document.getElementById('generate-idea-status');
+  btn.disabled = true;
+  status.textContent = 'Generating a new idea from your current taste profile...';
+  try {
+    const res = await fetch('/api/playlist-ideas/generate', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      status.textContent = `Error: ${data.detail || 'failed to generate idea'}`;
+      return;
+    }
+    status.textContent = `Generated "${data.title}".`;
+    load();
+  } catch (e) {
+    status.textContent = 'Failed to generate idea.';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function regeneratePlaylistFromIdea(idea, btn) {
+  const status = document.getElementById(`idea-status-${btn.dataset.idx}`);
+  btn.disabled = true;
+  status.textContent = 'Clearing current tracks and searching fresh...';
+  try {
+    const res = await fetch('/api/spotify/playlists/from-idea/regenerate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: idea.title, description: idea.description || '' }),
+    });
+    const data = await res.json();
+    if (res.status === 401 && data.auth_url) {
+      status.innerHTML = `Spotify isn't connected yet. <a href="${data.auth_url}" target="_blank" rel="noopener">Connect Spotify</a>, then click Regenerate again.`;
+      return;
+    }
+    if (!res.ok) {
+      status.textContent = `Error: ${data.detail || 'failed to regenerate playlist'}`;
+      return;
+    }
+    const tracksList = (data.tracks || []).map(t =>
+      `<li>${t.name} — ${t.artist} <span class="empty">(${Math.round(t.confidence * 100)}% confidence — ${t.reason})</span></li>`
+    ).join('');
+    status.innerHTML = `
+      Regenerated, added ${data.track_count} fresh track${data.track_count === 1 ? '' : 's'}.
+      <a href="${data.playlist_url}" target="_blank" rel="noopener">Open in Spotify</a>
+      ${tracksList ? `<details><summary>Why these tracks?</summary><ul>${tracksList}</ul></details>` : ''}
+    `;
+  } catch (e) {
+    status.textContent = 'Failed to regenerate playlist.';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function dismissIdea(idea, btn) {
+  const status = document.getElementById(`idea-status-${btn.dataset.idx}`);
+  btn.disabled = true;
+  status.textContent = 'Dismissing...';
+  try {
+    const res = await fetch('/api/playlist-ideas/dismiss', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: idea.title }),
+    });
+    if (!res.ok) {
+      status.textContent = 'Failed to dismiss.';
+      btn.disabled = false;
+      return;
+    }
+    btn.closest('.card').style.display = 'none';
+    loadDismissedIdeas();
+  } catch (e) {
+    status.textContent = 'Failed to dismiss.';
+    btn.disabled = false;
+  }
+}
+
+async function loadDismissedIdeas() {
+  const el = document.getElementById('dismissed-ideas');
+  try {
+    const res = await fetch('/api/playlist-ideas/dismissed');
+    const items = await res.json();
+    if (!items.length) {
+      el.innerHTML = '<span class="empty">none</span>';
+      return;
+    }
+    el.innerHTML = items.map((item, idx) => `
+      <div class="card">
+        <div class="row">
+          <div>${item.idea_title}</div>
+          <button class="restore-idea" data-title="${item.idea_title}">Restore</button>
+        </div>
+      </div>
+    `).join('');
+    el.querySelectorAll('.restore-idea').forEach(btn => {
+      btn.addEventListener('click', () => restoreIdea(btn.dataset.title));
+    });
+  } catch (e) {
+    el.innerHTML = '<span class="empty">Failed to load dismissed ideas.</span>';
+  }
+}
+
+async function restoreIdea(title) {
+  try {
+    await fetch('/api/playlist-ideas/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    });
+    load();
+  } catch (e) {
+    // no-op — user can retry from the Dismissed ideas list
+  }
+}
+
+document.getElementById('refresh-all').addEventListener('click', async (e) => {
+  const btn = e.target;
+  const status = document.getElementById('refresh-status');
+  btn.disabled = true;
+  status.textContent = 'Refreshing taste profile files and live purchase data... (can take a minute)';
+  try {
+    const res = await fetch('/api/refresh-all', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      status.textContent = `Error: ${data.detail || 'refresh failed'}`;
+      return;
+    }
+    const purchasesNote = data.purchases && data.purchases.skipped
+      ? ` (purchase data skipped: ${data.purchases.reason})`
+      : data.purchases ? ` (synced ${data.purchases.albums_synced} albums)` : '';
+    status.textContent = `Refreshed.${purchasesNote}`;
+    load();
+  } catch (e) {
+    status.textContent = 'Refresh failed.';
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+load();
+</script>
+</body>
+</html>

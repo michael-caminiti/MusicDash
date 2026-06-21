@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MusicDash - Recent</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  nav a { margin-right: 1rem; text-decoration: none; color: #555; }
+  nav a.active { color: #111; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
+  th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
+  select { margin-bottom: 1rem; padding: 0.3rem; }
+  .empty { color: #888; font-style: italic; }
+  .now-playing { color: #2a6; font-weight: 600; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Current Taste</a>
+  <a href="/genres">Genre Trends</a>
+  <a href="/artists">Top Artists</a>
+  <a href="/reviews">Reviews</a>
+  <a href="/playlists">Playlists</a>
+  <a href="/purchase">Purchase</a>
+  <a href="/collection">Collection</a>
+  <a href="/ask">Ask</a>
+  <a href="/recent" class="active">Recent</a>
+</nav>
+<h1>Recent Scrobbles</h1>
+<select id="period-select">
+  <option value="today">Today</option>
+  <option value="24h" selected>Last 24 Hours</option>
+  <option value="7d">Last 7 Days</option>
+  <option value="30d">Last 30 Days</option>
+</select>
+<span id="status"></span>
+<table id="table"><thead><tr><th>Time</th><th>Artist</th><th>Track</th><th>Album</th></tr></thead><tbody></tbody></table>
+
+<script>
+async function load() {
+  const period = document.getElementById('period-select').value;
+  const status = document.getElementById('status');
+  const tbody = document.querySelector('#table tbody');
+  status.textContent = 'Loading...';
+  tbody.innerHTML = '';
+  try {
+    const res = await fetch(`/api/scrobbles/recent?period=${period}`);
+    const data = await res.json();
+    if (res.status === 400) {
+      status.textContent = `Error: ${data.detail}`;
+      return;
+    }
+    if (!res.ok) {
+      status.textContent = `Error: ${data.detail || 'failed to load recent scrobbles'}`;
+      return;
+    }
+    const tracks = data.tracks || [];
+    status.textContent = tracks.length ? `${tracks.length} play${tracks.length === 1 ? '' : 's'}` : '';
+    tbody.innerHTML = tracks.length
+      ? tracks.map(t => {
+          const time = t.now_playing
+            ? '<span class="now-playing">Now playing</span>'
+            : (t.uts ? new Date(t.uts * 1000).toLocaleString() : '');
+          return `<tr><td>${time}</td><td>${t.artist}</td><td>${t.track}</td><td>${t.album || ''}</td></tr>`;
+        }).join('')
+      : '<tr><td colspan="4" class="empty">No scrobbles in this period.</td></tr>';
+  } catch (e) {
+    status.textContent = 'Failed to load recent scrobbles.';
+  }
+}
+
+document.getElementById('period-select').addEventListener('change', load);
+load();
+</script>
+</body>
+</html>

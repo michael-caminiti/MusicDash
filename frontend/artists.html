@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MusicDash - Top Artists</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  nav a { margin-right: 1rem; text-decoration: none; color: #555; }
+  nav a.active { color: #111; font-weight: 600; }
+  .controls { margin-bottom: 1rem; }
+  .artist-list { list-style: none; padding: 0; margin: 1.5rem 0 0; }
+  .artist-list li { display: flex; align-items: center; gap: 0.6rem; padding: 0.35rem 0; }
+  .artist-list img, .artist-list .avatar-fallback {
+    width: 32px; height: 32px; border-radius: 50%; object-fit: cover; background: #ddd; flex-shrink: 0;
+  }
+  .artist-list .plays { color: #888; margin-left: auto; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Current Taste</a>
+  <a href="/genres">Genre Trends</a>
+  <a href="/artists" class="active">Top Artists</a>
+  <a href="/reviews">Reviews</a>
+  <a href="/playlists">Playlists</a>
+  <a href="/purchase">Purchase</a>
+  <a href="/collection">Collection</a>
+  <a href="/ask">Ask</a>
+  <a href="/recent">Recent</a>
+</nav>
+<h1>Top Artists (by scrobble count)</h1>
+<div class="controls">
+  <label>Period:
+    <select id="period">
+      <option value="7day">Last 7 days</option>
+      <option value="30day">Last 30 days</option>
+      <option value="all" selected>All time</option>
+    </select>
+  </label>
+</div>
+<canvas id="chart" height="120"></canvas>
+<ul class="artist-list" id="artist-list"></ul>
+
+<script>
+let chart;
+async function load() {
+  const period = document.getElementById('period').value;
+  const res = await fetch(`/api/scrobbles/top-artists?period=${period}&limit=15`);
+  const data = await res.json();
+  const ctx = document.getElementById('chart');
+  if (chart) chart.destroy();
+  chart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.map(d => d.artist),
+      datasets: [{ label: 'Plays', data: data.map(d => d.plays), backgroundColor: '#4361ee' }],
+    },
+    options: { indexAxis: 'y', plugins: { legend: { display: false } } },
+  });
+
+  const list = document.getElementById('artist-list');
+  list.innerHTML = data.map(d => `
+    <li data-artist="${d.artist}">
+      <span class="avatar-fallback"></span>
+      <span>${d.artist}</span>
+      <span class="plays">${d.plays} plays</span>
+    </li>
+  `).join('');
+  loadImages(data.map(d => d.artist));
+}
+
+async function loadImages(artists) {
+  if (!artists.length) return;
+  try {
+    const res = await fetch(`/api/spotify/artist-images?names=${encodeURIComponent(artists.join(','))}`);
+    if (!res.ok) return;
+    const images = await res.json();
+    document.querySelectorAll('#artist-list li').forEach(li => {
+      const info = images[li.dataset.artist];
+      if (info && info.image_url) {
+        li.querySelector('.avatar-fallback').outerHTML = `<img src="${info.image_url}" alt="">`;
+      }
+    });
+  } catch (e) {
+    // Spotify not configured/connected — fall back avatars stay as-is.
+  }
+}
+
+document.getElementById('period').addEventListener('change', load);
+load();
+</script>
+</body>
+</html>

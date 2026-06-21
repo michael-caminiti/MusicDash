@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MusicDash - Collection</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  nav a { margin-right: 1rem; text-decoration: none; color: #555; }
+  nav a.active { color: #111; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
+  button { padding: 0.3rem 0.8rem; cursor: pointer; }
+  select { padding: 0.3rem; }
+  .empty { color: #888; font-style: italic; }
+  #status, #add-status { color: #666; font-size: 0.9rem; margin-left: 0.5rem; }
+  .thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; display: block; }
+  .thumb-cell { width: 56px; }
+  .controls { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
+  .pagination { display: flex; align-items: center; gap: 0.75rem; margin: 1rem 0; }
+  .rating { width: 3.5rem; }
+  .remove-btn { color: #a33; background: none; border: 1px solid #a33; border-radius: 4px; }
+  section { margin-top: 2.5rem; }
+  .search-row { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+  .search-row input { flex: 1; padding: 0.4rem; }
+  .candidate { display: flex; align-items: center; gap: 0.75rem; border: 1px solid #ddd; border-radius: 8px; padding: 0.5rem 0.75rem; margin-bottom: 0.5rem; }
+  .candidate .thumb { width: 40px; height: 40px; }
+  .candidate .title { flex: 1; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Current Taste</a>
+  <a href="/genres">Genre Trends</a>
+  <a href="/artists">Top Artists</a>
+  <a href="/reviews">Reviews</a>
+  <a href="/playlists">Playlists</a>
+  <a href="/purchase">Purchase</a>
+  <a href="/collection" class="active">Collection</a>
+  <a href="/ask">Ask</a>
+  <a href="/recent">Recent</a>
+</nav>
+<h1>My Collection</h1>
+<div class="controls">
+  <label>Folder:
+    <select id="folder-select"></select>
+  </label>
+  <span id="status"></span>
+</div>
+<table id="table"><thead><tr><th></th><th>Artist</th><th>Title</th><th>Year</th><th>Rating</th><th>Folder</th><th></th></tr></thead><tbody></tbody></table>
+<div class="pagination">
+  <button id="prev-page">Prev</button>
+  <span id="page-info"></span>
+  <button id="next-page">Next</button>
+</div>
+
+<section>
+  <h1>Add to Collection</h1>
+  <div class="search-row">
+    <input type="text" id="search-input" placeholder="Search Discogs (artist, album)...">
+    <button id="search-btn">Search</button>
+    <span id="add-status"></span>
+  </div>
+  <div id="search-results"></div>
+</section>
+
+<script>
+let folders = [];
+let page = 1;
+const perPage = 50;
+
+function folderOptionsHtml(selectedId) {
+  return folders.map(f => `<option value="${f.id}" ${f.id === selectedId ? 'selected' : ''}>${f.name}</option>`).join('');
+}
+
+async function loadFolders() {
+  const res = await fetch('/api/collection/folders');
+  folders = await res.json();
+  const select = document.getElementById('folder-select');
+  select.innerHTML = folderOptionsHtml(0);
+  select.value = 0;
+}
+
+async function loadItems() {
+  const folderId = document.getElementById('folder-select').value;
+  const status = document.getElementById('status');
+  status.textContent = 'Loading...';
+  try {
+    const res = await fetch(`/api/collection/items?folder_id=${folderId}&page=${page}&per_page=${perPage}`);
+    const data = await res.json();
+    status.textContent = '';
+    renderItems(data.items || []);
+    const p = data.pagination || {};
+    document.getElementById('page-info').textContent = p.pages ? `Page ${p.page} of ${p.pages} (${p.items} items)` : '';
+    document.getElementById('prev-page').disabled = page <= 1;
+    document.getElementById('next-page').disabled = !p.pages || page >= p.pages;
+  } catch (e) {
+    status.textContent = 'Failed to load collection.';
+  }
+}
+
+function renderItems(items) {
+  const tbody = document.querySelector('#table tbody');
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No items in this folder.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = items.map(item => {
+    const info = item.basic_information || {};
+    const artist = (info.artists || []).map(a => a.name).join(', ');
+    const thumb = info.thumb || info.cover_image;
+    return `
+      <tr data-release-id="${item.id}" data-instance-id="${item.instance_id}" data-folder-id="${item.folder_id}">
+        <td class="thumb-cell">${thumb ? `<img class="thumb" src="${thumb}" alt="">` : ''}</td>
+        <td>${artist}</td>
+        <td>${info.title || ''}</td>
+        <td>${info.year || ''}</td>
+        <td><input type="number" class="rating" min="0" max="5" value="${item.rating || 0}"></td>
+        <td><select class="move-folder">${folderOptionsHtml(item.folder_id)}</select></td>
+        <td><button class="remove-btn">Remove</button></td>
+      </tr>
+    `;
+  }).join('');
+
+  tbody.querySelectorAll('tr').forEach(row => {
+    const releaseId = row.dataset.releaseId;
+    const instanceId = row.dataset.instanceId;
+    const folderId = row.dataset.folderId;
+
+    row.querySelector('.rating').addEventListener('change', async (e) => {
+      await fetch(`/api/collection/items/${releaseId}/rate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder_id: Number(folderId), instance_id: Number(instanceId), rating: Number(e.target.value) }),
+      });
+    });
+
+    row.querySelector('.move-folder').addEventListener('change', async (e) => {
+      const destination = Number(e.target.value);
+      await fetch(`/api/collection/items/${releaseId}/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder_id: Number(folderId), instance_id: Number(instanceId), destination_folder_id: destination }),
+      });
+      loadItems();
+    });
+
+    row.querySelector('.remove-btn').addEventListener('click', async () => {
+      if (!confirm('Remove this item from your collection?')) return;
+      await fetch(`/api/collection/items/${releaseId}?folder_id=${folderId}&instance_id=${instanceId}`, { method: 'DELETE' });
+      loadItems();
+    });
+  });
+}
+
+document.getElementById('folder-select').addEventListener('change', () => { page = 1; loadItems(); });
+document.getElementById('prev-page').addEventListener('click', () => { if (page > 1) { page--; loadItems(); } });
+document.getElementById('next-page').addEventListener('click', () => { page++; loadItems(); });
+
+document.getElementById('search-btn').addEventListener('click', async () => {
+  const q = document.getElementById('search-input').value.trim();
+  const addStatus = document.getElementById('add-status');
+  const resultsEl = document.getElementById('search-results');
+  if (!q) return;
+  addStatus.textContent = 'Searching...';
+  try {
+    const res = await fetch(`/api/collection/search?q=${encodeURIComponent(q)}`);
+    const results = await res.json();
+    addStatus.textContent = '';
+    if (!results.length) {
+      resultsEl.innerHTML = '<p class="empty">No results.</p>';
+      return;
+    }
+    resultsEl.innerHTML = results.map(r => `
+      <div class="candidate" data-release-id="${r.release_id}">
+        ${r.thumb_url ? `<img class="thumb" src="${r.thumb_url}" alt="">` : ''}
+        <div class="title">${r.title || ''} ${r.year ? `(${r.year})` : ''}</div>
+        <select class="add-folder">${folderOptionsHtml(1)}</select>
+        <button class="add-btn">Add</button>
+      </div>
+    `).join('');
+    resultsEl.querySelectorAll('.candidate').forEach(card => {
+      const releaseId = card.dataset.releaseId;
+      card.querySelector('.add-btn').addEventListener('click', async () => {
+        const folderId = Number(card.querySelector('.add-folder').value);
+        addStatus.textContent = 'Adding...';
+        const addRes = await fetch('/api/collection/items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ release_id: Number(releaseId), folder_id: folderId }),
+        });
+        addStatus.textContent = addRes.ok ? 'Added!' : 'Failed to add.';
+        if (addRes.ok) loadItems();
+      });
+    });
+  } catch (e) {
+    addStatus.textContent = 'Search failed.';
+  }
+});
+
+(async function init() {
+  await loadFolders();
+  await loadItems();
+})();
+</script>
+</body>
+</html>

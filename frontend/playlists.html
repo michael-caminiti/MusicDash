@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MusicDash - Playlists</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  nav a { margin-right: 1rem; text-decoration: none; color: #555; }
+  nav a.active { color: #111; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
+  th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
+  select { margin-bottom: 1rem; padding: 0.3rem; }
+  .empty { color: #888; font-style: italic; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Current Taste</a>
+  <a href="/genres">Genre Trends</a>
+  <a href="/artists">Top Artists</a>
+  <a href="/reviews">Reviews</a>
+  <a href="/playlists" class="active">Playlists</a>
+  <a href="/purchase">Purchase</a>
+  <a href="/collection">Collection</a>
+  <a href="/ask">Ask</a>
+  <a href="/recent">Recent</a>
+</nav>
+<h1>Playlist Browser</h1>
+<select id="playlist-select"></select>
+<table id="table"><thead><tr><th>Track</th><th>Artist(s)</th><th>Album</th><th>Added</th><th>Popularity</th></tr></thead><tbody></tbody></table>
+
+<script>
+async function loadPlaylists() {
+  const res = await fetch('/api/playlists');
+  const playlists = await res.json();
+  const select = document.getElementById('playlist-select');
+  if (!playlists.length) {
+    document.querySelector('h1').insertAdjacentHTML('afterend', '<p class="empty">No playlists ingested yet.</p>');
+    return;
+  }
+  select.innerHTML = playlists.map(p => `<option value="${p.playlist_name}">${p.playlist_name} (${p.track_count})</option>`).join('');
+  select.addEventListener('change', () => loadTracks(select.value));
+  loadTracks(select.value);
+}
+
+async function loadTracks(name) {
+  const res = await fetch(`/api/playlists/${encodeURIComponent(name)}`);
+  const tracks = await res.json();
+  document.querySelector('#table tbody').innerHTML = tracks.map(t => `
+    <tr>
+      <td>${t.track_name}</td>
+      <td>${t.artist_names}</td>
+      <td>${t.album_name || ''}</td>
+      <td>${t.added_at || ''}</td>
+      <td>${t.popularity ?? ''}</td>
+    </tr>
+  `).join('');
+}
+
+loadPlaylists();
+</script>
+</body>
+</html>

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MusicDash - Ask</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  nav a { margin-right: 1rem; text-decoration: none; color: #555; }
+  nav a.active { color: #111; font-weight: 600; }
+  .empty { color: #888; font-style: italic; }
+  #question { width: 100%; box-sizing: border-box; padding: 0.6rem; font-size: 1rem; }
+  #ask-form { display: flex; gap: 0.5rem; margin: 1rem 0; }
+  #ask-form button { padding: 0.6rem 1.2rem; cursor: pointer; }
+  .answer { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin-top: 1rem; white-space: pre-wrap; }
+  .examples { color: #888; font-size: 0.85rem; margin-top: 0.5rem; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Current Taste</a>
+  <a href="/genres">Genre Trends</a>
+  <a href="/artists">Top Artists</a>
+  <a href="/reviews">Reviews</a>
+  <a href="/playlists">Playlists</a>
+  <a href="/purchase">Purchase</a>
+  <a href="/collection">Collection</a>
+  <a href="/ask" class="active">Ask</a>
+</nav>
+<h1>Ask Your Listening History</h1>
+<p class="empty">Ask anything about your real scrobble history — time periods, artists, habit shifts.</p>
+<form id="ask-form">
+  <input id="question" type="text" placeholder="e.g. What was I listening to the week before June 13th?" autocomplete="off">
+  <button type="submit">Ask</button>
+</form>
+<div class="examples">Note: scrobble history only goes back to when ingestion started — questions about earlier periods won't have data.</div>
+<div id="result"></div>
+
+<script>
+document.getElementById('ask-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('question');
+  const question = input.value.trim();
+  if (!question) return;
+  const result = document.getElementById('result');
+  const btn = e.target.querySelector('button');
+  btn.disabled = true;
+  result.innerHTML = '<p class="empty">Thinking...</p>';
+  try {
+    const res = await fetch('/api/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      result.innerHTML = `<p class="empty">Error: ${data.detail || 'failed to get an answer'}</p>`;
+      return;
+    }
+    result.innerHTML = `<div class="answer">${data.answer}</div>`;
+  } catch (err) {
+    result.innerHTML = '<p class="empty">Failed to get an answer.</p>';
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

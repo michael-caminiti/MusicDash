@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MusicDash - Reviews</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  nav a { margin-right: 1rem; text-decoration: none; color: #555; }
+  nav a.active { color: #111; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
+  th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
+  .badge { border-radius: 10px; padding: 0.1rem 0.6rem; font-size: 0.8rem; }
+  .badge.claude { background: #e8e0fc; color: #5b3dd6; }
+  .badge.chatgpt { background: #e6f4ea; color: #2a7a44; }
+  .nodata { color: #aaa; }
+  #review-view { border: 1px solid #ddd; border-radius: 8px; padding: 1rem 1.5rem; display: none; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Current Taste</a>
+  <a href="/genres">Genre Trends</a>
+  <a href="/artists">Top Artists</a>
+  <a href="/reviews" class="active">Reviews</a>
+  <a href="/playlists">Playlists</a>
+  <a href="/purchase">Purchase</a>
+  <a href="/collection">Collection</a>
+  <a href="/ask">Ask</a>
+  <a href="/recent">Recent</a>
+</nav>
+<h1>Review Archive</h1>
+<table id="table"><thead><tr><th>Date</th><th>Source</th><th>Data</th><th></th></tr></thead><tbody></tbody></table>
+<div id="review-view"></div>
+
+<script>
+async function load() {
+  const res = await fetch('/api/reviews');
+  const reviews = await res.json();
+  const tbody = document.querySelector('#table tbody');
+  tbody.innerHTML = reviews.map(r => `
+    <tr>
+      <td>${r.review_date}</td>
+      <td><span class="badge ${r.source_generator}">${r.source_generator}</span></td>
+      <td>${r.has_data ? 'yes' : '<span class="nodata">empty template</span>'}</td>
+      <td><a href="#" data-date="${r.review_date}" class="view-link">view</a></td>
+    </tr>
+  `).join('');
+  document.querySelectorAll('.view-link').forEach(a => {
+    a.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const html = await (await fetch(`/api/reviews/${a.dataset.date}/html`)).text();
+      const view = document.getElementById('review-view');
+      view.innerHTML = html;
+      view.style.display = 'block';
+    });
+  });
+}
+load();
+</script>
+</body>
+</html>

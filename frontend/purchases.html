@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MusicDash - Purchase</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  nav a { margin-right: 1rem; text-decoration: none; color: #555; }
+  nav a.active { color: #111; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
+  button { padding: 0.4rem 1rem; cursor: pointer; }
+  .empty { color: #888; font-style: italic; }
+  #status { color: #666; font-size: 0.9rem; margin-left: 0.5rem; }
+  .thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; display: block; }
+  .thumb-cell { width: 56px; }
+  .links a { margin-right: 0.75rem; }
+  section { margin-bottom: 2rem; }
+  .rec-card { border: 1px solid #ddd; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 0.5rem; }
+  .rec-card b { display: block; }
+  .rec-card .reason { color: #666; font-size: 0.9rem; margin-top: 0.2rem; }
+  .rec-card a { font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Current Taste</a>
+  <a href="/genres">Genre Trends</a>
+  <a href="/artists">Top Artists</a>
+  <a href="/reviews">Reviews</a>
+  <a href="/playlists">Playlists</a>
+  <a href="/purchase" class="active">Purchase</a>
+  <a href="/collection">Collection</a>
+  <a href="/ask">Ask</a>
+  <a href="/recent">Recent</a>
+</nav>
+<h1>From your 2026 Finds</h1>
+<button id="refresh">Refresh</button><span id="status"></span>
+<table id="table"><thead><tr><th></th><th>Artist</th><th>Album</th><th>Links</th></tr></thead><tbody></tbody></table>
+
+<section>
+  <h1>You may also like</h1>
+  <div id="recs"></div>
+</section>
+
+<script>
+function marketplaceLinks(item) {
+  const links = [];
+  if (item.discogs_release_id) {
+    links.push(`<a href="https://www.discogs.com/sell/release/${item.discogs_release_id}" target="_blank" rel="noopener">Discogs</a>`);
+  }
+  const query = encodeURIComponent(`${item.artist} ${item.album} vinyl`);
+  links.push(`<a href="https://www.amazon.com/s?k=${query}" target="_blank" rel="noopener">Amazon</a>`);
+  return links.join('');
+}
+
+async function loadPurchases() {
+  const res = await fetch('/api/purchases');
+  const items = await res.json();
+  const tbody = document.querySelector('#table tbody');
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No data cached yet — click "Refresh".</td></tr>';
+    return;
+  }
+  tbody.innerHTML = items.map(i => `
+    <tr>
+      <td class="thumb-cell">${(i.discogs_thumb_url || i.image_url) ? `<img class="thumb" src="${i.discogs_thumb_url || i.image_url}" alt="">` : ''}</td>
+      <td>${i.artist || ''}</td>
+      <td>${i.album || ''}</td>
+      <td class="links">${marketplaceLinks(i)}</td>
+    </tr>
+  `).join('');
+}
+
+async function loadRecommendations() {
+  const res = await fetch('/api/purchases/recommendations');
+  const recs = await res.json();
+  const el = document.getElementById('recs');
+  if (!recs.length) {
+    el.innerHTML = '<p class="empty">No recommendations yet — click "Refresh".</p>';
+    return;
+  }
+  el.innerHTML = recs.map(r => `
+    <div class="rec-card">
+      <b>${r.artist}</b>
+      <div class="reason">${r.reason}</div>
+      <a href="https://www.last.fm/music/${encodeURIComponent(r.artist)}" target="_blank" rel="noopener">View on Last.fm</a>
+    </div>
+  `).join('');
+}
+
+document.getElementById('refresh').addEventListener('click', async () => {
+  const status = document.getElementById('status');
+  status.textContent = 'Refreshing... (can take a minute for a large playlist)';
+  try {
+    const res = await fetch('/api/purchases/refresh', { method: 'POST' });
+    const data = await res.json();
+    if (res.status === 401 && data.auth_url) {
+      status.innerHTML = `Spotify isn't connected yet. <a href="${data.auth_url}" target="_blank" rel="noopener">Connect Spotify</a>, then click Refresh again.`;
+      return;
+    }
+    if (!res.ok) {
+      status.textContent = `Error: ${data.detail || 'refresh failed'}`;
+      return;
+    }
+    status.textContent = `Synced ${data.albums_synced} albums, found ${data.recommendations} recommendations.`;
+    loadPurchases();
+    loadRecommendations();
+  } catch (e) {
+    status.textContent = 'Refresh failed.';
+  }
+});
+
+loadPurchases();
+loadRecommendations();
+</script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MusicDash - Genre Trends</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  nav a { margin-right: 1rem; text-decoration: none; color: #555; }
+  nav a.active { color: #111; font-weight: 600; }
+  .empty { color: #888; font-style: italic; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Current Taste</a>
+  <a href="/genres" class="active">Genre Trends</a>
+  <a href="/artists">Top Artists</a>
+  <a href="/reviews">Reviews</a>
+  <a href="/playlists">Playlists</a>
+  <a href="/purchase">Purchase</a>
+  <a href="/collection">Collection</a>
+  <a href="/ask">Ask</a>
+  <a href="/recent">Recent</a>
+</nav>
+<h1>Genre Frequency Over Time</h1>
+<div id="empty-state" class="empty" style="display:none;">Not enough taste-profile history yet — check back after a few more /music-review runs.</div>
+<canvas id="chart" height="100"></canvas>
+
+<script>
+async function load() {
+  const res = await fetch('/api/genres/trend');
+  const data = await res.json();
+  if (!data.dates || data.dates.length < 2 || Object.keys(data.genres).length === 0) {
+    document.getElementById('empty-state').style.display = 'block';
+    document.getElementById('chart').style.display = 'none';
+    return;
+  }
+  const colors = ['#4361ee', '#f72585', '#4cc9f0', '#7209b7', '#3a0ca3', '#80ed99', '#f8961e', '#ef233c'];
+  const datasets = Object.entries(data.genres).map(([genre, values], i) => ({
+    label: genre,
+    data: values,
+    borderColor: colors[i % colors.length],
+    fill: false,
+    stepped: true,
+  }));
+  new Chart(document.getElementById('chart'), {
+    type: 'line',
+    data: { labels: data.dates, datasets },
+    options: {
+      scales: { y: { min: 0, max: 1, ticks: { stepSize: 1 } } },
+      plugins: { legend: { position: 'bottom' } },
+    },
+  });
+}
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+venv/
+.venv/
+backend/dashboard.db
+.env
+.spotify_cache
+.cache
+*.zip
+*.log
+snapcheck.yml
