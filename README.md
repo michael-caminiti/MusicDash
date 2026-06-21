@@ -117,3 +117,159 @@ during development, roughly in order of how concrete they are:
 - Spotify search's real page-size cap is 10 (not the documented 50); several Spotify playlist read/write endpoints were silently deprecated in Feb 2026 in favor of new ones with different payload shapes — see the inline comments in `backend/connectors/spotify.py` before assuming `spotipy`'s methods still work.
 - The Groq second-opinion gate is intentionally a flag-for-review step, not an auto-filter — an earlier auto-remove version was too trigger-happy on legitimate, simply-unfamiliar artists.
 - `python-dotenv`'s `load_dotenv()` won't override pre-existing OS environment variables unless called with `override=True` (already done in `main.py`) — worth remembering if env vars ever seem to silently not take effect.
+
+## First-time setup guide (Windows, zero assumed setup)
+
+This walks through getting MusicDash running from a completely blank Windows machine — no Python, no
+Git, no accounts set up yet. It's long on purpose: every step is spelled out so nothing's assumed.
+Budget about 30-45 minutes, most of it waiting on installers and signing up for free accounts.
+
+You'll end up with the dashboard open in your browser at `http://localhost:8001`. A few tabs (Ask,
+playlist ideas, genre primers) need extra API keys — those are clearly marked **optional** below, so
+you can get the core dashboard running first and add them later if you want.
+
+### Step 1 — Install Python
+
+1. Go to **python.org/downloads** and click the big "Download Python" button (any 3.11 or newer version is fine).
+2. Run the installer. **Important:** on the very first install screen, check the box at the bottom that says **"Add python.exe to PATH"** before clicking Install. This is the most commonly missed step and causes every later command to fail with "python is not recognized."
+3. When it finishes, open **PowerShell** (click Start, type `PowerShell`, press Enter) and type:
+   ```powershell
+   python --version
+   ```
+   You should see something like `Python 3.12.x`. If you instead see an error, close PowerShell, reopen it, and try again (PATH changes sometimes need a fresh window) — if it still fails, redo the Python install and make sure that checkbox was checked.
+
+### Step 2 — Install Git
+
+1. Go to **git-scm.com/downloads** and download the Windows installer.
+2. Run it — the default options on every screen are fine, just keep clicking "Next" then "Install."
+3. Back in PowerShell, confirm it worked:
+   ```powershell
+   git --version
+   ```
+
+### Step 3 — Get the code
+
+In PowerShell:
+```powershell
+cd ~
+git clone https://github.com/michael-caminiti/musicdiscovery.git MusicDash
+cd MusicDash
+```
+This downloads the project into a folder called `MusicDash` in your user folder. (If you weren't given
+access to that GitHub repo yet, ask whoever shared this guide to add your GitHub account as a
+collaborator — it's currently private.)
+
+### Step 4 — Set up the Python environment
+
+Still in PowerShell, inside the `MusicDash` folder:
+```powershell
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+- The second line should make your prompt show `(venv)` at the start — that means it worked.
+- The third line downloads everything the app needs; it can take a minute or two.
+- **Every time you come back to work on this later**, you'll need to re-run `venv\Scripts\activate` first (but not the other two commands) — that's what tells PowerShell to use the right Python setup.
+
+### Step 5 — Create your `.env` file (your personal settings/keys)
+
+In File Explorer, go into the `MusicDash` folder, find the file named `.env.example`, copy it, and
+rename the copy to exactly `.env` (no `.example` at the end — and make sure Explorer isn't hiding the
+real file extension; if you're not sure, do this in PowerShell instead):
+```powershell
+copy .env.example .env
+```
+You'll fill this file in with real values as you go through the steps below — open it in Notepad
+whenever a step says to add something:
+```powershell
+notepad .env
+```
+
+### Step 6 — Last.fm account + API key (required)
+
+1. If you don't already have one, make a free account at **last.fm** and use it for a few days so it has some listening history (it tracks what you play if you connect it to Spotify/Apple Music/etc. — see Last.fm's own "Connect" page for that, it's separate from this app).
+2. Go to **last.fm/api/account/create** and fill out the short form (any name/description is fine — this is just to get a key, not to publish an app).
+3. After submitting, you'll see an **API key**. Copy it.
+4. In your `.env` file, fill in:
+   ```
+   LASTFM_API_KEY=<paste the key here>
+   LASTFM_USER=<your Last.fm username>
+   ```
+
+### Step 7 — Spotify Developer app (required)
+
+1. Go to **developer.spotify.com/dashboard** and log in with your normal Spotify account.
+2. Click **Create app**. Fill in any name/description. For **Redirect URI**, enter exactly:
+   ```
+   http://127.0.0.1:8001/callback
+   ```
+   (this has to match exactly, including `http://` not `https://` — Spotify will reject anything else later if it doesn't match).
+3. Check the box agreeing to Spotify's developer terms, then click Save.
+4. On the app's page, click **Settings** to find your **Client ID**, and click **View client secret** for the **Client Secret**.
+5. In `.env`, fill in:
+   ```
+   SPOTIFY_CLIENT_ID=<your client id>
+   SPOTIFY_CLIENT_SECRET=<your client secret>
+   SPOTIFY_REDIRECT_URI=http://127.0.0.1:8001/callback
+   ```
+
+### Step 8 — Discogs account + token (required for the Collection/Purchase tabs)
+
+1. Make a free account at **discogs.com** if you don't have one (and optionally add a few records to your collection there so the Collection tab has something to show).
+2. Go to **discogs.com/settings/developers** and click **Generate new token**.
+3. Copy the token shown.
+4. In `.env`:
+   ```
+   DISCOGS_PERSONAL_ACCESS_TOKEN=<your token>
+   DISCOGS_USERNAME=<your discogs username>
+   ```
+
+### Step 9 — Anthropic API key (optional — needed for the Ask tab, playlist-idea generation, genre primers)
+
+1. Go to **console.anthropic.com**, sign up, and add a small amount of billing credit (a few dollars covers a lot of usage for personal use).
+2. Go to **API Keys** in the left sidebar and click **Create Key**.
+3. In `.env`:
+   ```
+   ANTHROPIC_API_KEY=<your key>
+   ```
+   If you'd rather skip this for now, just leave it out — every other tab still works fine, and the app will tell you clearly (not silently fail) if you click something that needs it.
+
+### Step 10 — Groq API key (optional — only needed for the "second opinion" playlist check)
+
+1. Go to **console.groq.com**, sign up (it's free, no billing needed for this).
+2. Go to **API Keys** and create one.
+3. In `.env`:
+   ```
+   GROQ_API_KEY=<your key>
+   ```
+
+### Step 11 — Run it
+
+Back in PowerShell (make sure you see `(venv)` at the start of the line — if not, run `venv\Scripts\activate` again):
+```powershell
+uvicorn backend.main:app --reload --port 8001
+```
+Leave this window open — it's the running app. Open your browser and go to:
+```
+http://localhost:8001
+```
+You should see the MusicDash dashboard. To stop the app later, click into that PowerShell window and press `Ctrl+C`. To start it again next time, you only need Steps 4 (just the `activate` line) and 11.
+
+### Step 12 — Connect Spotify
+
+The first time you open a tab that needs Spotify (Purchase, Collection, or any playlist-creation
+button), the app will show a link to connect your Spotify account. Click it, log into Spotify if
+asked, click **Agree**, and you'll be redirected back to the dashboard, now connected. This only needs
+to be done once per computer.
+
+### You're done
+
+At this point every tab should work except possibly Ask/playlist-generation/genre-primers if you
+skipped Steps 9-10. If something doesn't work, the error message in the page is meant to say exactly
+which `.env` value is missing or wrong — re-check that value's step above.
+
+**Optional, advanced:** the Current Taste, Genre Trends, and Reviews tabs are richest if you also have
+a `Documents\Music Discovery` folder with `Taste Profiles\CURRENT.md`, `Claude Reviews\`, `Last.fm
+Exports\`, and `Spotify Playlists\` subfolders — these come from a separate Claude Code skill
+(`/music-review`) that a more technical user would set up. Without it, those three tabs just show "no
+data yet" — every other tab works independently of this folder.
