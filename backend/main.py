@@ -1,20 +1,28 @@
+import colorsys
+import io
 import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
 
+import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
 from pydantic import BaseModel
 
 from . import db, ingest
+from .connectors.bandcamp import BandcampConnector
 from .connectors.discogs import DiscogsConnector
 from .connectors.groq import GroqConnector
 from .connectors.lastfm import LastfmConnector
 from .connectors.llm import LLMConnector
+from .connectors.setlistfm import SetlistFmConnector
+from .connectors.songkick import SongkickConnector
 from .connectors.spotify import SpotifyConnector
+from .connectors.ticketmaster import TicketmasterConnector
 from .connectors.wikipedia import WikipediaConnector
 from .markdown_render import render_review_html
 
@@ -76,6 +84,31 @@ def _get_discogs_connector() -> DiscogsConnector:
             detail="DISCOGS_PERSONAL_ACCESS_TOKEN / DISCOGS_USERNAME not configured in .env",
         )
     return DiscogsConnector(token, username)
+
+
+def _get_ticketmaster_connector() -> TicketmasterConnector:
+    api_key = os.getenv("TICKETMASTER_API_KEY")
+    location = os.getenv("TICKETMASTER_LOCATION")
+    if not (api_key and location):
+        raise HTTPException(
+            status_code=400,
+            detail="TICKETMASTER_API_KEY / TICKETMASTER_LOCATION not configured in .env",
+        )
+    return TicketmasterConnector(api_key, location)
+
+
+def _get_setlistfm_connector() -> SetlistFmConnector:
+    api_key = os.getenv("SETLISTFM_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="SETLISTFM_API_KEY not configured in .env")
+    return SetlistFmConnector(api_key)
+
+
+def _get_songkick_connector() -> SongkickConnector:
+    username = os.getenv("SONGKICK_USERNAME")
+    if not username:
+        raise HTTPException(status_code=400, detail="SONGKICK_USERNAME not configured in .env")
+    return SongkickConnector(username)
 
 
 def _get_lastfm_connector() -> LastfmConnector:
@@ -222,6 +255,25 @@ def get_genre_primer(genre: str):
         }
     finally:
         conn.close()
+
+
+@app.post("/api/genre-primer/{genre}/starter-pack")
+def post_genre_primer_starter_pack(genre: str):
+    conn = db.get_connection()
+    try:
+        row = conn.execute("SELECT key_artists_json FROM genre_primers WHERE genre = ?", (genre,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="No cached primer for this genre — load it with 'Tell Me More' first.")
+
+    key_artists = json.loads(row["key_artists_json"] or "[]")
+    if not key_artists:
+        raise HTTPException(status_code=422, detail="This primer has no key artists to seed a playlist from.")
+
+    title = f"{genre} Starter Pack"
+    description = ", ".join(key_artists)
+    return post_spotify_playlist_from_idea(PlaylistIdeaRequest(title=title, description=description))
 
 
 @app.post("/api/playlist-ideas/generate")
@@ -400,6 +452,19 @@ def get_scrobbles_top_artists(period: str = "all", limit: int = 15):
         conn.close()
 
 
+@app.post("/api/scrobbles/sync-live")
+def post_scrobbles_sync_live():
+    lastfm = _get_lastfm_connector()
+    conn = db.get_connection()
+    try:
+        added = ingest.sync_live_scrobbles(conn, lastfm)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to sync live scrobbles: {e}")
+    finally:
+        conn.close()
+    return {"added": added}
+
+
 @app.get("/api/scrobbles/timeline")
 def get_scrobbles_timeline(days: int = 30):
     conn = db.get_connection()
@@ -418,10 +483,25 @@ class AskRequest(BaseModel):
     question: str
 
 
+# Cheap keyword gate before the (more expensive, more error-prone) LLM idea-extraction call — avoids
+# misrouting genuine history questions that happen to mention an artist (e.g. "when did I start
+# listening to Wilco") into the playlist-request path.
+PLAYLIST_INTENT_KEYWORDS = ("playlist", "make me", "build me", "create a")
+
+
 @app.post("/api/ask")
 def post_ask(req: AskRequest):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="Question is required.")
+
+    if any(kw in req.question.lower() for kw in PLAYLIST_INTENT_KEYWORDS):
+        llm = _get_llm_connector()
+        try:
+            idea = llm.extract_idea_from_text(req.question)
+        except Exception:
+            idea = None
+        if idea and idea.get("title") and idea.get("description"):
+            return {"type": "playlist_idea", "idea": idea}
 
     conn = db.get_connection()
     try:
@@ -433,7 +513,7 @@ def post_ask(req: AskRequest):
         conn.close()
 
     if not rows:
-        return {"answer": "No listening history has been ingested yet — run a refresh first."}
+        return {"type": "answer", "answer": "No listening history has been ingested yet — run a refresh first."}
 
     scrobbles_text = "\n".join(f"{r['played_at']} | {r['artist']} | {r['track']}" for r in rows)
     llm = _get_llm_connector()
@@ -441,7 +521,7 @@ def post_ask(req: AskRequest):
         answer = llm.ask_about_history(req.question, scrobbles_text)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to get an answer: {e}")
-    return {"answer": answer}
+    return {"type": "answer", "answer": answer}
 
 
 @app.get("/api/scrobbles/recent")
@@ -519,7 +599,69 @@ def get_purchases():
     conn = db.get_connection()
     try:
         rows = conn.execute("SELECT * FROM purchase_items ORDER BY artist, album").fetchall()
-        return [dict(r) for r in rows]
+        owned = {
+            (r["artist_norm"], r["title_norm"])
+            for r in conn.execute("SELECT artist_norm, title_norm FROM discogs_collection_cache").fetchall()
+        }
+        return [
+            dict(r) for r in rows
+            if (_normalize_match_key(r["artist"]), _normalize_match_key(r["album"])) not in owned
+        ]
+    finally:
+        conn.close()
+
+
+def _dominant_color_hex(image_bytes: bytes) -> str:
+    """Simple average color, not true clustering — a fun visual artifact, not a rigorous analysis."""
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB").resize((50, 50))
+    pixels = list(img.getdata())
+    r, g, b = (sum(c[i] for c in pixels) // len(pixels) for i in range(3))
+    return "#{:02x}{:02x}{:02x}".format(r, g, b)
+
+
+@app.get("/api/moodboard")
+def get_moodboard():
+    conn = db.get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT artist, album, spotify_album_id, image_url FROM purchase_items "
+            "WHERE spotify_album_id IS NOT NULL AND image_url IS NOT NULL"
+        ).fetchall()
+        cached = {
+            r["spotify_album_id"]: r["dominant_color_hex"]
+            for r in conn.execute("SELECT spotify_album_id, dominant_color_hex FROM album_palette").fetchall()
+        }
+        now = datetime.now(timezone.utc).isoformat()
+        results = []
+        for row in rows:
+            album_id = row["spotify_album_id"]
+            color = cached.get(album_id)
+            if not color:
+                try:
+                    resp = requests.get(row["image_url"], timeout=10)
+                    resp.raise_for_status()
+                    color = _dominant_color_hex(resp.content)
+                except Exception:
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO album_palette (spotify_album_id, dominant_color_hex, fetched_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(spotify_album_id) DO UPDATE SET
+                        dominant_color_hex=excluded.dominant_color_hex, fetched_at=excluded.fetched_at
+                    """,
+                    (album_id, color, now),
+                )
+                cached[album_id] = color
+            r_, g_, b_ = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+            hue = colorsys.rgb_to_hsv(r_ / 255, g_ / 255, b_ / 255)[0]
+            results.append({
+                "artist": row["artist"], "album": row["album"],
+                "image_url": row["image_url"], "dominant_color_hex": color, "hue": hue,
+            })
+        conn.commit()
+        results.sort(key=lambda r: r["hue"])
+        return results
     finally:
         conn.close()
 
@@ -547,8 +689,22 @@ def post_purchases_refresh():
     return _refresh_purchases(spotify)
 
 
+def _normalize_match_key(s: str) -> str:
+    """Best-effort match key for comparing a Spotify album to a Discogs collection release.
+
+    Stripping parenthetical/bracketed content handles two unrelated quirks in one pass: Discogs's
+    artist disambiguation suffix (e.g. "Real Estate (2)") and album edition suffixes (e.g. "Sunbather
+    (10 Year Anniversary)"). A title that differs *outside* parens won't match — that's the safe
+    failure direction (still shown as a purchase candidate, never wrongly hidden).
+    """
+    s = re.sub(r"\([^)]*\)|\[[^\]]*\]", " ", s)
+    s = re.sub(r"[^a-z0-9]+", " ", s.lower())
+    return " ".join(s.split())
+
+
 def _refresh_purchases(spotify: SpotifyConnector) -> dict:
     discogs = _get_discogs_connector()
+    bandcamp = BandcampConnector()
     albums = spotify.get_playlist_albums(FINDS_PLAYLIST_ID)
 
     now = datetime.now(timezone.utc).isoformat()
@@ -559,23 +715,62 @@ def _refresh_purchases(spotify: SpotifyConnector) -> dict:
                 match = discogs.search_release(album["artist"], album["album"])
             except Exception:
                 match = None
+            try:
+                bc_match = bandcamp.search_album(album["artist"], album["album"])
+            except Exception:
+                bc_match = None
             conn.execute(
                 """
                 INSERT INTO purchase_items (
                     artist, album, spotify_album_id, image_url,
-                    discogs_release_id, discogs_thumb_url, example_track, last_checked
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    discogs_release_id, discogs_thumb_url, example_track, last_checked,
+                    bandcamp_url, bandcamp_item_id, bandcamp_item_type, added_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(artist, album) DO UPDATE SET
                     spotify_album_id=excluded.spotify_album_id, image_url=excluded.image_url,
                     discogs_release_id=excluded.discogs_release_id, discogs_thumb_url=excluded.discogs_thumb_url,
-                    example_track=excluded.example_track, last_checked=excluded.last_checked
+                    example_track=excluded.example_track, last_checked=excluded.last_checked,
+                    bandcamp_url=excluded.bandcamp_url, bandcamp_item_id=excluded.bandcamp_item_id,
+                    bandcamp_item_type=excluded.bandcamp_item_type, added_at=excluded.added_at
                 """,
                 (
                     album["artist"], album["album"], album.get("spotify_album_id"), album.get("image_url"),
                     (match or {}).get("release_id"), (match or {}).get("thumb_url"),
                     album.get("example_track"), now,
+                    (bc_match or {}).get("url"), (bc_match or {}).get("item_id"), (bc_match or {}).get("item_type"),
+                    album.get("added_at"),
                 ),
             )
+        conn.commit()
+
+        # Cache the user's real Discogs collection (normalized artist/title pairs only) so
+        # "already owned" can be checked on every /api/purchases read without hitting Discogs live.
+        collection_pairs = set()
+        page = 1
+        while True:
+            try:
+                page_data = discogs.get_collection_items(folder_id=0, page=page, per_page=100)
+            except Exception:
+                break
+            for item in page_data.get("items", []):
+                info = item.get("basic_information", {})
+                artists = info.get("artists") or []
+                if not artists or not info.get("title"):
+                    continue
+                collection_pairs.add((
+                    _normalize_match_key(artists[0]["name"]),
+                    _normalize_match_key(info["title"]),
+                ))
+            pagination = page_data.get("pagination", {})
+            if page >= pagination.get("pages", 0):
+                break
+            page += 1
+
+        conn.execute("DELETE FROM discogs_collection_cache")
+        conn.executemany(
+            "INSERT INTO discogs_collection_cache (artist_norm, title_norm, fetched_at) VALUES (?, ?, ?)",
+            [(artist_norm, title_norm, now) for artist_norm, title_norm in collection_pairs],
+        )
         conn.commit()
 
         lastfm = _get_lastfm_connector()
@@ -628,6 +823,239 @@ def _refresh_purchases(spotify: SpotifyConnector) -> dict:
         conn.close()
 
     return {"albums_synced": len(albums), "recommendations": len(ranked)}
+
+
+@app.get("/api/shows")
+def get_shows():
+    conn = db.get_connection()
+    try:
+        rows = conn.execute("SELECT * FROM tour_events ORDER BY event_date").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+class ShowStatusRequest(BaseModel):
+    status: str
+
+
+@app.post("/api/shows/{event_id}/status")
+def post_show_status(event_id: int, req: ShowStatusRequest):
+    if req.status not in {"new", "interested", "going", "passed"}:
+        raise HTTPException(status_code=422, detail="Status must be one of: new, interested, going, passed.")
+    conn = db.get_connection()
+    try:
+        conn.execute("UPDATE tour_events SET status = ? WHERE id = ?", (req.status, event_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/shows/refresh")
+def post_shows_refresh():
+    spotify = _get_spotify_connector()
+    if not spotify.is_authorized():
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Spotify not connected.", "auth_url": spotify.get_auth_url()},
+        )
+    ticketmaster = _get_ticketmaster_connector()
+
+    conn = db.get_connection()
+    try:
+        profile_row = conn.execute(
+            "SELECT defining_artists_json FROM taste_profile_snapshots WHERE snapshot_date = 'CURRENT'"
+        ).fetchone()
+        durable_artists = set(json.loads(profile_row["defining_artists_json"] or "[]")) if profile_row else set()
+
+        albums = spotify.get_playlist_albums(FINDS_PLAYLIST_ID)
+        recent_artists = {a["artist"] for a in albums}
+
+        artists_to_check = {(name, "durable_artist") for name in durable_artists}
+        artists_to_check |= {(name, "recent_find") for name in recent_artists if name not in durable_artists}
+
+        now = datetime.now(timezone.utc).isoformat()
+        events_found = 0
+        for artist, confidence in artists_to_check:
+            try:
+                events = ticketmaster.search_events_for_artist(artist)
+            except Exception:
+                continue
+            for e in events:
+                if not e.get("ticketmaster_id"):
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO tour_events (
+                        artist, event_name, event_date, venue, city,
+                        ticketmaster_url, ticketmaster_id, confidence, fetched_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(ticketmaster_id) DO UPDATE SET
+                        event_name=excluded.event_name, event_date=excluded.event_date,
+                        venue=excluded.venue, city=excluded.city, ticketmaster_url=excluded.ticketmaster_url,
+                        confidence=excluded.confidence, fetched_at=excluded.fetched_at
+                    """,
+                    (
+                        artist, e["event_name"], e["event_date"], e["venue"], e["city"],
+                        e["url"], e["ticketmaster_id"], confidence, now,
+                    ),
+                )
+                events_found += 1
+
+        # Songkick-tracked shows are a separate, independent source from the artist-driven Ticketmaster
+        # search above — they can be for any show the user tracked, including artists MusicDash has no
+        # taste signal for at all. No DB-level UNIQUE constraint on songkick_uid (SQLite can't add one
+        # to an existing column without a table rebuild), so dedup is a check-then-insert/update here.
+        songkick_found = 0
+        try:
+            songkick = _get_songkick_connector()
+            tracked = songkick.get_tracked_events()
+        except Exception:
+            tracked = []
+        for e in tracked:
+            if not e.get("songkick_uid"):
+                continue
+            existing = conn.execute(
+                "SELECT id FROM tour_events WHERE songkick_uid = ?", (e["songkick_uid"],)
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE tour_events SET
+                        artist=?, event_name=?, event_date=?, venue=?, city=?,
+                        ticketmaster_url=?, fetched_at=?
+                    WHERE id = ?
+                    """,
+                    (e["artist"], e["event_name"], e["event_date"], e["venue"], e["city"],
+                     e["url"], now, existing["id"]),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO tour_events (
+                        artist, event_name, event_date, venue, city, ticketmaster_url,
+                        confidence, source, songkick_uid, fetched_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'self_tracked', 'songkick', ?, ?)
+                    """,
+                    (e["artist"], e["event_name"], e["event_date"], e["venue"], e["city"],
+                     e["url"], e["songkick_uid"], now),
+                )
+            songkick_found += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return {
+        "artists_checked": len(artists_to_check),
+        "ticketmaster_events_found": events_found,
+        "songkick_events_found": songkick_found,
+    }
+
+
+class ManualShowRequest(BaseModel):
+    artist: str
+    event_name: str
+    event_date: str
+    venue: str = ""
+    city: str = ""
+    url: str = ""
+
+
+@app.post("/api/shows/manual")
+def post_manual_show(req: ManualShowRequest):
+    conn = db.get_connection()
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """
+            INSERT INTO tour_events (
+                artist, event_name, event_date, venue, city, ticketmaster_url,
+                confidence, source, fetched_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'self_tracked', 'manual', ?)
+            """,
+            (req.artist, req.event_name, req.event_date, req.venue, req.city, req.url, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/shows/{event_id}/preshow-playlist")
+def post_preshow_playlist(event_id: int):
+    spotify = _get_spotify_connector()
+    if not spotify.is_authorized():
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Spotify not connected.", "auth_url": spotify.get_auth_url()},
+        )
+    setlistfm = _get_setlistfm_connector()
+
+    conn = db.get_connection()
+    try:
+        event = conn.execute("SELECT * FROM tour_events WHERE id = ?", (event_id,)).fetchone()
+    finally:
+        conn.close()
+    if not event:
+        raise HTTPException(status_code=404, detail="Show not found.")
+
+    try:
+        setlists = setlistfm.get_recent_setlists(event["artist"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch setlists: {e}")
+    if not setlists:
+        raise HTTPException(status_code=404, detail="No recent setlists found for this artist on setlist.fm.")
+
+    # Rank by frequency across the artist's last few real shows — songs they're playing every night
+    # come first, not just whatever happened to be in the most recent single setlist.
+    song_counts = {}
+    for setlist in setlists:
+        for song in setlist["songs"]:
+            song_counts[song] = song_counts.get(song, 0) + 1
+    ranked_songs = sorted(song_counts.items(), key=lambda kv: kv[1], reverse=True)
+
+    seen_uris = set()
+    track_uris = []
+    for song_name, _ in ranked_songs:
+        try:
+            match = spotify.search_track_by_title_and_artist(song_name, event["artist"])
+        except Exception:
+            continue
+        if match and match["uri"] not in seen_uris:
+            seen_uris.add(match["uri"])
+            track_uris.append(match["uri"])
+
+    if not track_uris:
+        raise HTTPException(status_code=404, detail="Couldn't match any setlist songs to Spotify tracks.")
+
+    conn = db.get_connection()
+    try:
+        # Reuse the existing pre-show playlist for this event if "Build" is clicked again, rather than
+        # creating a fresh duplicate each time — same reuse pattern as the playlist-idea flow.
+        if event["preshow_playlist_id"]:
+            playlist_id, playlist_url = event["preshow_playlist_id"], event["preshow_playlist_url"]
+            try:
+                existing_uris = spotify.get_playlist_track_uris(playlist_id)
+                spotify.add_tracks_to_playlist(playlist_id, [u for u in track_uris if u not in existing_uris])
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"Failed to update playlist: {e}")
+        else:
+            title = f"{event['artist']} — Pre-Show ({event['event_date']})"
+            try:
+                playlist = spotify.create_playlist(title, f"Songs from {event['artist']}'s recent live setlists.")
+                spotify.add_tracks_to_playlist(playlist["id"], track_uris)
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"Failed to create playlist: {e}")
+            playlist_id, playlist_url = playlist["id"], playlist["external_urls"]["spotify"]
+            conn.execute(
+                "UPDATE tour_events SET preshow_playlist_id = ?, preshow_playlist_url = ? WHERE id = ?",
+                (playlist_id, playlist_url, event_id),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+
+    return {"playlist_url": playlist_url, "track_count": len(track_uris)}
 
 
 class RateItemRequest(BaseModel):
@@ -832,12 +1260,20 @@ def _gather_playlist_candidates(
     artist's real Last.fm tags before being kept. `disabled_categories` lets the rejection-rate-based
     strategy weighting (see `_category_rejection_rates`) skip a category entirely once it's proven to
     be mostly wrong historically, rather than searching it every time just to filter it out later.
+
+    At most one track per artist survives, full stop — per-category limits (e.g.
+    `SIMILAR_ARTIST_TRACK_LIMIT`) allow more than one track per artist *within* a single category, and
+    nothing stopped the same artist turning up again across categories (seed, then also similar-artist
+    of a different seed, then also a genre/text match). `seen_artists` is the cross-category guard;
+    since categories run in priority order, the first (highest-priority) track for an artist wins and
+    later ones from any category are dropped.
     """
     artist_terms, genre_terms = _classify_idea_terms(description)
     if not artist_terms and not genre_terms:
         genre_terms = [title]
 
     seen_uris = set()
+    seen_artists = set()
     candidates = []
 
     def add(items: list, category: str, confidence: float, reason_fn) -> None:
@@ -846,7 +1282,11 @@ def _gather_playlist_candidates(
         for t in items:
             if t["uri"] in seen_uris:
                 continue
+            artist_key = t["artists"][0]["name"].lower()
+            if artist_key in seen_artists:
+                continue
             seen_uris.add(t["uri"])
+            seen_artists.add(artist_key)
             candidates.append({
                 "uri": t["uri"], "name": t["name"], "artist": t["artists"][0]["name"],
                 "reason": reason_fn(t), "category": category, "confidence": confidence,
@@ -1240,6 +1680,51 @@ def post_spotify_playlist_from_idea(req: PlaylistIdeaRequest):
         conn.close()
 
 
+@app.post("/api/playlist-ideas/liner-notes")
+def post_playlist_idea_liner_notes(req: PlaylistIdeaRequest, regenerate: bool = False):
+    """Idea titles can contain "/" (e.g. "Emo Revival / Shoegaze Bridge") so title+description travel in
+    the request body rather than a URL path param, same shape as the existing PlaylistIdeaRequest."""
+    conn = db.get_connection()
+    try:
+        if not regenerate:
+            cached = conn.execute(
+                "SELECT liner_notes FROM playlist_liner_notes WHERE idea_title = ?", (req.title,)
+            ).fetchone()
+            if cached:
+                return {"liner_notes": cached["liner_notes"], "cached": True}
+
+        track_rows = conn.execute(
+            "SELECT track_name, artist_name FROM playlist_idea_tracks WHERE idea_title = ? AND status = 'added'",
+            (req.title,),
+        ).fetchall()
+        if not track_rows:
+            raise HTTPException(
+                status_code=422,
+                detail="No tracks found for this playlist yet — create it on Spotify first.",
+            )
+        tracks = [{"name": r["track_name"], "artist": r["artist_name"]} for r in track_rows]
+
+        llm = _get_llm_connector()
+        try:
+            notes = llm.generate_liner_notes(req.title, req.description, tracks)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to generate liner notes: {e}")
+
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """
+            INSERT INTO playlist_liner_notes (idea_title, liner_notes, generated_at) VALUES (?, ?, ?)
+            ON CONFLICT(idea_title) DO UPDATE SET
+                liner_notes=excluded.liner_notes, generated_at=excluded.generated_at
+            """,
+            (req.title, notes, now),
+        )
+        conn.commit()
+        return {"liner_notes": notes, "cached": False}
+    finally:
+        conn.close()
+
+
 class GenreNoteRequest(BaseModel):
     genre_note: str
 
@@ -1494,3 +1979,13 @@ def serve_ask():
 @app.get("/recent")
 def serve_recent():
     return _serve_page("recent.html")
+
+
+@app.get("/moodboard")
+def serve_moodboard():
+    return _serve_page("moodboard.html")
+
+
+@app.get("/shows")
+def serve_shows():
+    return _serve_page("shows.html")

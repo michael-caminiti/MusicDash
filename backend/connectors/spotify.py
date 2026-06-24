@@ -106,6 +106,7 @@ class SpotifyConnector(BaseConnector):
                     continue
                 artist = album["artists"][0]["name"]
                 key = (artist, album["name"])
+                added_at = entry.get("added_at")
                 if key not in albums:
                     images = album.get("images") or []
                     albums[key] = {
@@ -114,7 +115,13 @@ class SpotifyConnector(BaseConnector):
                         "spotify_album_id": album.get("id"),
                         "image_url": images[0]["url"] if images else None,
                         "example_track": track.get("name"),
+                        "added_at": added_at,
                     }
+                elif added_at and (not albums[key]["added_at"] or added_at > albums[key]["added_at"]):
+                    # Multiple tracks can map to the same album and aren't necessarily in
+                    # chronological order — keep the latest add date so "added recently" means
+                    # "at least one track from this album was added recently."
+                    albums[key]["added_at"] = added_at
             offset += len(items)
             if offset >= page.get("total", 0) or not items:
                 break
@@ -141,6 +148,20 @@ class SpotifyConnector(BaseConnector):
         results = sp.search(q=f'artist:"{artist_name}"', type="track", limit=limit)
         items = results.get("tracks", {}).get("items", [])
         return [t for t in items if t["artists"][0]["name"].lower() == artist_name.lower()]
+
+    def search_track_by_title_and_artist(self, title: str, artist_name: str) -> dict | None:
+        """Match a specific song title to a specific artist — used for setlist-to-Spotify matching.
+
+        `track:"..."` alone is too loose for common song titles (confirmed live: searching a generic
+        setlist song title without an artist filter returned tracks by unrelated artists, not the one
+        actually playing it), so this combines `track:` and `artist:` filters and still verifies the
+        returned artist name matches exactly, same defensive check as `search_tracks_by_artist`.
+        """
+        sp = self._authed_client()
+        results = sp.search(q=f'track:"{title}" artist:"{artist_name}"', type="track", limit=5)
+        items = results.get("tracks", {}).get("items", [])
+        matches = [t for t in items if t["artists"][0]["name"].lower() == artist_name.lower()]
+        return matches[0] if matches else None
 
     def search_tracks_by_genre(self, term: str, limit: int) -> list:
         """Tracks tagged with this genre via Spotify's `genre:` field filter.

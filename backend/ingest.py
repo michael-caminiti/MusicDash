@@ -3,7 +3,7 @@ import json
 import os
 import re
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from . import db
 
@@ -345,6 +345,38 @@ def _ingest_one_scrobble_csv(conn, path: str) -> int:
             affected += cur.rowcount
 
     _log_ingest(conn, path, mtime, size, affected, "ok")
+    return affected
+
+
+def sync_live_scrobbles(conn, lastfm) -> int:
+    """Pull recent plays directly from the Last.fm API into the same `scrobbles` ledger CSV
+    import writes to, so Top Artists et al. don't lag behind a manual CSV export/refresh."""
+    row = conn.execute("SELECT MAX(played_at) FROM scrobbles").fetchone()
+    last_played_at = row[0] if row else None
+    if last_played_at:
+        from_ts = int(datetime.fromisoformat(last_played_at).timestamp())
+    else:
+        from_ts = int((datetime.now() - timedelta(days=7)).timestamp())
+
+    tracks = lastfm.get_recent_tracks(from_ts=from_ts)
+
+    affected = 0
+    for t in tracks:
+        if t.get("now_playing") or not t.get("uts"):
+            continue
+        artist = (t.get("artist") or "").strip()
+        track = (t.get("track") or "").strip()
+        if not artist or not track:
+            continue
+        played_at = datetime.fromtimestamp(t["uts"]).isoformat()
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO scrobbles (artist, track, album, played_at, url, source_file) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (artist, track, (t.get("album") or "").strip(), played_at, "", "lastfm_api_live"),
+        )
+        affected += cur.rowcount
+
+    conn.commit()
     return affected
 
 

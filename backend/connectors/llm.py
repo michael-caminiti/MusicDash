@@ -32,6 +32,16 @@ EXTRACT_IDEA_SYSTEM_PROMPT = (
     '(e.g. "math rock"). Only include artists/genres actually named in the text.'
 )
 
+LINER_NOTES_MODEL = ASK_MODEL
+LINER_NOTES_MAX_TOKENS = 500
+
+LINER_NOTES_SYSTEM_PROMPT = (
+    "Write liner notes for this playlist as if it were a real compilation/comp release — the kind of "
+    "writeup you'd find on the back of a vinyl sleeve or a zine review. 2-3 short paragraphs: capture "
+    "the mood/throughline connecting these tracks, reference a few of the actual artists by name, and "
+    "use an evocative but not overwrought tone. No markdown, no headers — just the prose."
+)
+
 GENRE_PRIMER_MODEL = ASK_MODEL
 GENRE_PRIMER_MAX_TOKENS = 600
 
@@ -141,6 +151,19 @@ class LLMConnector:
         )
         text = "".join(block.text for block in response.content if block.type == "text")
         return self._parse_json_response(text)
+
+    def generate_liner_notes(self, title: str, description: str, tracks: list) -> str:
+        track_lines = "\n".join(f"- {t['name']} — {t['artist']}" for t in tracks) or "(no tracks yet)"
+        response = self.client.messages.create(
+            model=LINER_NOTES_MODEL,
+            max_tokens=LINER_NOTES_MAX_TOKENS,
+            system=LINER_NOTES_SYSTEM_PROMPT,
+            messages=[{
+                "role": "user",
+                "content": f"Playlist: {title}\nConcept: {description}\n\nTracklist:\n{track_lines}",
+            }],
+        )
+        return "".join(block.text for block in response.content if block.type == "text")
 
     @staticmethod
     def _parse_json_response(text: str) -> dict:
