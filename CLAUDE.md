@@ -62,6 +62,31 @@ either restart uvicorn manually or `touch backend/main.py` to force a reload.
 - Track objects from `/v1/search` no longer include a `popularity` field for this app — a
   "prefer popular/obscure tracks" feature isn't buildable without that data right now.
 
+## Ticketmaster API gotchas (confirmed live)
+
+- **`postalCode` + `radius` geo search is broken** — confirmed live: searching a real artist with a real
+  upcoming show in the exact postal code (Turnstile, zip 04106) returned zero results via `postalCode`,
+  but the same query with `latlong` + `radius` found it correctly. `TicketmasterConnector` geocodes the
+  postal code once via the free Zippopotam.us API and searches by `latlong` instead — don't switch back
+  to `postalCode` without re-testing live first.
+- **Keyword search matches loosely against event titles/descriptions, not just performer names** —
+  confirmed live: searching "Home" (a real band) also matched "Home Free," "Comics Come Home," etc.
+  Filter on `_embedded.attractions` for an exact artist-name match instead of trusting the keyword hit.
+
+## Bandcamp gotchas (confirmed live)
+
+- `bandcamp.com/search`'s HTML page is bot-challenge-walled (Fastly), but the JSON endpoint Bandcamp's
+  own search bar calls — `POST bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic` — isn't,
+  needs no auth/cookies, and returns the embed item ID directly. Use that, not HTML scraping.
+
+## Songkick / Bandsintown access notes
+
+- Songkick's API key program is currently closed to new applicants (confirmed live, 2026-06).
+  Bandsintown requires artist consent or a business-partnerships approval — neither is realistically
+  obtainable for a personal project. Songkick does expose a public per-user iCal feed of tracked shows
+  (`songkick.com/users/{username}/calendars.ics?filter=attendance`) with no key needed — that's what
+  `SongkickConnector` uses.
+
 ## Other gotchas
 
 - **Last.fm CSV exports have a UTF-8 BOM** — open with `encoding="utf-8-sig"`, not `"utf-8"`.
@@ -76,6 +101,13 @@ either restart uvicorn manually or `touch backend/main.py` to force a reload.
   behavior.
 - **The Purchase and Collection tabs deliberately don't cache Discogs pricing/stats** — Discogs's own
   marketplace numbers were found unreliable in past sessions, so staleness wasn't worth the speedup.
+- **`search_tracks_freetext` is not reliable for matching a specific song title to a specific artist**
+  (confirmed live: matching setlist song titles this way returned almost entirely wrong-artist tracks).
+  Use `search_track_by_title_and_artist` instead, which combines `track:`/`artist:` filters and verifies
+  the returned artist name exactly, same defensive pattern as `search_tracks_by_artist`.
+- **Pillow 11.0.0 has no Python 3.14 wheel** (confirmed live: build failure) — needed 12.2.0. Worth
+  re-checking pinned versions against the active Python version before assuming an install failure is
+  something else.
 
 ## Claude Code skills in this repo
 
