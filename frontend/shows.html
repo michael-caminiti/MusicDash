@@ -23,6 +23,7 @@
   .manual-form button { flex: 0 0 auto; }
   .row-status { font-size: 0.85rem; color: #666; display: block; margin-top: 0.2rem; }
   .row-status a { color: #2a6; }
+  .remove-btn { color: #a33; background: none; border: 1px solid #a33; border-radius: 4px; padding: 0.3rem 0.8rem; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -54,7 +55,7 @@
 </form>
 <span id="manual-status"></span>
 <table id="table">
-  <thead><tr><th>Artist</th><th>Event</th><th>Date</th><th>Venue</th><th>Signal</th><th>Status</th><th>Actions</th></tr></thead>
+  <thead><tr><th>Artist</th><th>Event</th><th>Date</th><th>Venue</th><th>Signal</th><th>Status</th><th>Actions</th><th></th></tr></thead>
   <tbody></tbody>
 </table>
 
@@ -77,7 +78,7 @@ async function loadShows() {
   const shows = await res.json();
   const tbody = document.querySelector('#table tbody');
   if (!shows.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">No shows cached yet — click "Refresh".</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No shows cached yet — click "Refresh".</td></tr>';
     return;
   }
   tbody.innerHTML = shows.map(s => `
@@ -92,6 +93,7 @@ async function loadShows() {
         ${(s.status === 'interested' || s.status === 'going') ? `<button class="preshow-btn">${s.preshow_playlist_url ? 'Update' : 'Build'} pre-show playlist</button>` : ''}
         <span class="row-status">${s.preshow_playlist_url ? `<a href="${s.preshow_playlist_url}" target="_blank" rel="noopener">Open playlist</a>` : ''}</span>
       </td>
+      <td><button class="remove-btn">Delete</button></td>
     </tr>
   `).join('');
 
@@ -130,6 +132,11 @@ async function loadShows() {
         }
       });
     }
+    row.querySelector('.remove-btn').addEventListener('click', async () => {
+      if (!confirm(`Delete this show from the list? (If it's a Ticketmaster or Songkick show, it'll come back on the next Refresh unless you also remove it at the source.)`)) return;
+      await fetch(`/api/shows/${id}`, { method: 'DELETE' });
+      loadShows();
+    });
   });
 }
 

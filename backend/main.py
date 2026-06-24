@@ -852,6 +852,17 @@ def post_show_status(event_id: int, req: ShowStatusRequest):
     return {"ok": True}
 
 
+@app.delete("/api/shows/{event_id}")
+def delete_show(event_id: int):
+    conn = db.get_connection()
+    try:
+        conn.execute("DELETE FROM tour_events WHERE id = ?", (event_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
 @app.post("/api/shows/refresh")
 def post_shows_refresh():
     spotify = _get_spotify_connector()
