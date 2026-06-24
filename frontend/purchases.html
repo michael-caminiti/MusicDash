@@ -15,11 +15,15 @@
   .thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; display: block; }
   .thumb-cell { width: 56px; }
   .links a { margin-right: 0.75rem; }
+  .listen-cell { width: 200px; }
+  .listen-cell iframe { border: 0; width: 200px; height: 42px; }
   section { margin-bottom: 2rem; }
   .rec-card { border: 1px solid #ddd; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 0.5rem; }
   .rec-card b { display: block; }
   .rec-card .reason { color: #666; font-size: 0.9rem; margin-top: 0.2rem; }
   .rec-card a { font-size: 0.85rem; }
+  #show-older { margin: 0.5rem 0; }
+  #older-table { display: none; }
 </style>
 </head>
 <body>
@@ -33,10 +37,14 @@
   <a href="/collection">Collection</a>
   <a href="/ask">Ask</a>
   <a href="/recent">Recent</a>
+  <a href="/moodboard">Mood Board</a>
+  <a href="/shows">Shows</a>
 </nav>
 <h1>From your 2026 Finds</h1>
 <button id="refresh">Refresh</button><span id="status"></span>
-<table id="table"><thead><tr><th></th><th>Artist</th><th>Album</th><th>Links</th></tr></thead><tbody></tbody></table>
+<table id="table"><thead><tr><th></th><th>Artist</th><th>Album</th><th>Listen</th><th>Links</th></tr></thead><tbody></tbody></table>
+<button id="show-older" style="display:none"></button>
+<table id="older-table"><thead><tr><th></th><th>Artist</th><th>Album</th><th>Listen</th><th>Links</th></tr></thead><tbody></tbody></table>
 
 <section>
   <h1>You may also like</h1>
@@ -44,33 +52,85 @@
 </section>
 
 <script>
+function bandcampEmbedUrl(item) {
+  const kind = item.bandcamp_item_type === 'a' ? 'album' : 'track';
+  return `https://bandcamp.com/EmbeddedPlayer/${kind}=${item.bandcamp_item_id}/size=small/bgcol=ffffff/linkcol=0687f5/tracklist=false/transparent=true/`;
+}
+
 function marketplaceLinks(item) {
   const links = [];
   if (item.discogs_release_id) {
     links.push(`<a href="https://www.discogs.com/sell/release/${item.discogs_release_id}" target="_blank" rel="noopener">Discogs</a>`);
+  }
+  if (item.bandcamp_url) {
+    links.push(`<a href="${item.bandcamp_url}" target="_blank" rel="noopener">Bandcamp</a>`);
   }
   const query = encodeURIComponent(`${item.artist} ${item.album} vinyl`);
   links.push(`<a href="https://www.amazon.com/s?k=${query}" target="_blank" rel="noopener">Amazon</a>`);
   return links.join('');
 }
 
-async function loadPurchases() {
-  const res = await fetch('/api/purchases');
-  const items = await res.json();
-  const tbody = document.querySelector('#table tbody');
-  if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="empty">No data cached yet — click "Refresh".</td></tr>';
-    return;
-  }
-  tbody.innerHTML = items.map(i => `
+const RECENT_DAYS = 7;
+
+function renderRow(i) {
+  return `
     <tr>
       <td class="thumb-cell">${(i.discogs_thumb_url || i.image_url) ? `<img class="thumb" src="${i.discogs_thumb_url || i.image_url}" alt="">` : ''}</td>
       <td>${i.artist || ''}</td>
       <td>${i.album || ''}</td>
+      <td class="listen-cell">${i.bandcamp_item_id ? `<iframe src="${bandcampEmbedUrl(i)}" seamless loading="lazy"></iframe>` : ''}</td>
       <td class="links">${marketplaceLinks(i)}</td>
     </tr>
-  `).join('');
+  `;
 }
+
+async function loadPurchases() {
+  const res = await fetch('/api/purchases');
+  const items = await res.json();
+  const tbody = document.querySelector('#table tbody');
+  const olderTbody = document.querySelector('#older-table tbody');
+  const showOlderBtn = document.getElementById('show-older');
+
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No data cached yet — click "Refresh".</td></tr>';
+    olderTbody.innerHTML = '';
+    showOlderBtn.style.display = 'none';
+    return;
+  }
+
+  const cutoff = Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000;
+  // No added_at (e.g. rows from before this feature existed) is treated as "older" —
+  // recency can't be confirmed, so the safe default is to collapse it, not show it.
+  const recent = items.filter(i => i.added_at && new Date(i.added_at).getTime() >= cutoff);
+  const older = items.filter(i => !i.added_at || new Date(i.added_at).getTime() < cutoff);
+
+  if (!recent.length) {
+    tbody.innerHTML = older.length
+      ? `<tr><td colspan="5" class="empty">Nothing added in the last ${RECENT_DAYS} days — ${older.length} older album${older.length === 1 ? '' : 's'} below.</td></tr>`
+      : '<tr><td colspan="5" class="empty">No data cached yet — click "Refresh".</td></tr>';
+  } else {
+    tbody.innerHTML = recent.map(renderRow).join('');
+  }
+
+  olderTbody.innerHTML = older.map(renderRow).join('');
+  if (older.length) {
+    showOlderBtn.style.display = '';
+    showOlderBtn.textContent = `Show ${older.length} older`;
+  } else {
+    showOlderBtn.style.display = 'none';
+    document.getElementById('older-table').style.display = 'none';
+  }
+}
+
+document.getElementById('show-older').addEventListener('click', () => {
+  const olderTable = document.getElementById('older-table');
+  const btn = document.getElementById('show-older');
+  const showing = olderTable.style.display === 'table';
+  olderTable.style.display = showing ? 'none' : 'table';
+  btn.textContent = showing
+    ? btn.textContent.replace('Hide', 'Show')
+    : btn.textContent.replace('Show', 'Hide');
+});
 
 async function loadRecommendations() {
   const res = await fetch('/api/purchases/recommendations');

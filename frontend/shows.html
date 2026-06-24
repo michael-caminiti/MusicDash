@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MusicDash - Shows</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  nav a { margin-right: 1rem; text-decoration: none; color: #555; }
+  nav a.active { color: #111; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
+  button { padding: 0.4rem 1rem; cursor: pointer; }
+  select { padding: 0.3rem; }
+  .empty { color: #888; font-style: italic; }
+  #status { color: #666; font-size: 0.9rem; margin-left: 0.5rem; }
+  .confidence { font-size: 0.8rem; border-radius: 10px; padding: 0.1rem 0.6rem; }
+  .confidence.durable_artist { background: #e8e0fc; color: #5b3dd6; }
+  .confidence.recent_find { background: #e6f4ea; color: #2a7a44; }
+  .confidence.songkick { background: #fde7e7; color: #b3392a; }
+  .confidence.manual { background: #eee; color: #555; }
+  .manual-form { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 1rem 0; border: 1px solid #ddd; border-radius: 8px; padding: 0.75rem; }
+  .manual-form input { padding: 0.4rem; flex: 1 1 140px; }
+  .manual-form button { flex: 0 0 auto; }
+  .row-status { font-size: 0.85rem; color: #666; display: block; margin-top: 0.2rem; }
+  .row-status a { color: #2a6; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Current Taste</a>
+  <a href="/genres">Genre Trends</a>
+  <a href="/artists">Top Artists</a>
+  <a href="/reviews">Reviews</a>
+  <a href="/playlists">Playlists</a>
+  <a href="/purchase">Purchase</a>
+  <a href="/collection">Collection</a>
+  <a href="/ask">Ask</a>
+  <a href="/recent">Recent</a>
+  <a href="/moodboard">Mood Board</a>
+  <a href="/shows" class="active">Shows</a>
+</nav>
+<h1>Tour Radar</h1>
+<p class="empty">Upcoming shows near you for your durable defining artists and anything currently in "2026 Finds," plus everything you're tracking on Songkick. Bandsintown has no usable feed/API for a personal project — add anything from there (or anywhere else) manually below.</p>
+<button id="refresh">Refresh</button><span id="status"></span>
+
+<form id="manual-form" class="manual-form">
+  <input id="manual-artist" placeholder="Artist" required>
+  <input id="manual-event-name" placeholder="Event name" required>
+  <input id="manual-date" type="date" required>
+  <input id="manual-venue" placeholder="Venue">
+  <input id="manual-city" placeholder="City">
+  <input id="manual-url" placeholder="Link (optional)">
+  <button type="submit">+ Add show manually</button>
+</form>
+<span id="manual-status"></span>
+<table id="table">
+  <thead><tr><th>Artist</th><th>Event</th><th>Date</th><th>Venue</th><th>Signal</th><th>Status</th><th>Actions</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<script>
+function signalBadge(show) {
+  if (show.source === 'songkick') return { cls: 'songkick', label: 'Tracked on Songkick' };
+  if (show.source === 'manual') return { cls: 'manual', label: 'Manually added' };
+  if (show.confidence === 'durable_artist') return { cls: 'durable_artist', label: 'Defining artist' };
+  return { cls: 'recent_find', label: 'Recent find' };
+}
+
+function statusOptionsHtml(selected) {
+  return ['new', 'interested', 'going', 'passed']
+    .map(s => `<option value="${s}" ${s === selected ? 'selected' : ''}>${s}</option>`)
+    .join('');
+}
+
+async function loadShows() {
+  const res = await fetch('/api/shows');
+  const shows = await res.json();
+  const tbody = document.querySelector('#table tbody');
+  if (!shows.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No shows cached yet — click "Refresh".</td></tr>';
+    return;
+  }
+  tbody.innerHTML = shows.map(s => `
+    <tr data-id="${s.id}">
+      <td>${s.artist}</td>
+      <td><a href="${s.ticketmaster_url}" target="_blank" rel="noopener">${s.event_name}</a></td>
+      <td>${s.event_date}</td>
+      <td>${s.venue || ''}${s.city ? `, ${s.city}` : ''}</td>
+      <td><span class="confidence ${signalBadge(s).cls}">${signalBadge(s).label}</span></td>
+      <td><select class="status-select">${statusOptionsHtml(s.status)}</select></td>
+      <td>
+        ${(s.status === 'interested' || s.status === 'going') ? `<button class="preshow-btn">${s.preshow_playlist_url ? 'Update' : 'Build'} pre-show playlist</button>` : ''}
+        <span class="row-status">${s.preshow_playlist_url ? `<a href="${s.preshow_playlist_url}" target="_blank" rel="noopener">Open playlist</a>` : ''}</span>
+      </td>
+    </tr>
+  `).join('');
+
+  tbody.querySelectorAll('tr').forEach(row => {
+    const id = row.dataset.id;
+    row.querySelector('.status-select').addEventListener('change', async (e) => {
+      await fetch(`/api/shows/${id}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: e.target.value }),
+      });
+      loadShows();
+    });
+    const preshowBtn = row.querySelector('.preshow-btn');
+    if (preshowBtn) {
+      preshowBtn.addEventListener('click', async () => {
+        const rowStatus = row.querySelector('.row-status');
+        preshowBtn.disabled = true;
+        rowStatus.textContent = 'Building...';
+        try {
+          const res = await fetch(`/api/shows/${id}/preshow-playlist`, { method: 'POST' });
+          const data = await res.json();
+          if (res.status === 401 && data.auth_url) {
+            rowStatus.innerHTML = `Spotify isn't connected. <a href="${data.auth_url}" target="_blank" rel="noopener">Connect</a>, then try again.`;
+            return;
+          }
+          if (!res.ok) {
+            rowStatus.textContent = `Error: ${data.detail || 'failed to build playlist'}`;
+            return;
+          }
+          rowStatus.innerHTML = `${data.track_count} track${data.track_count === 1 ? '' : 's'}. <a href="${data.playlist_url}" target="_blank" rel="noopener">Open playlist</a>`;
+        } catch (e) {
+          rowStatus.textContent = 'Failed to build playlist.';
+        } finally {
+          preshowBtn.disabled = false;
+        }
+      });
+    }
+  });
+}
+
+document.getElementById('refresh').addEventListener('click', async () => {
+  const status = document.getElementById('status');
+  status.textContent = 'Refreshing... (Ticketmaster for your defining artists + 2026 Finds, plus your Songkick tracked shows — can take a minute)';
+  try {
+    const res = await fetch('/api/shows/refresh', { method: 'POST' });
+    const data = await res.json();
+    if (res.status === 401 && data.auth_url) {
+      status.innerHTML = `Spotify isn't connected yet. <a href="${data.auth_url}" target="_blank" rel="noopener">Connect Spotify</a>, then click Refresh again.`;
+      return;
+    }
+    if (!res.ok) {
+      status.textContent = `Error: ${data.detail || 'refresh failed'}`;
+      return;
+    }
+    status.textContent = `Checked ${data.artists_checked} artists — ${data.ticketmaster_events_found} Ticketmaster shows, ${data.songkick_events_found} from Songkick.`;
+    loadShows();
+  } catch (e) {
+    status.textContent = 'Refresh failed.';
+  }
+});
+
+document.getElementById('manual-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const status = document.getElementById('manual-status');
+  status.textContent = 'Adding...';
+  try {
+    const res = await fetch('/api/shows/manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        artist: document.getElementById('manual-artist').value,
+        event_name: document.getElementById('manual-event-name').value,
+        event_date: document.getElementById('manual-date').value,
+        venue: document.getElementById('manual-venue').value,
+        city: document.getElementById('manual-city').value,
+        url: document.getElementById('manual-url').value,
+      }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      status.textContent = `Error: ${data.detail || 'failed to add show'}`;
+      return;
+    }
+    status.textContent = 'Added.';
+    document.getElementById('manual-form').reset();
+    loadShows();
+  } catch (err) {
+    status.textContent = 'Failed to add show.';
+  }
+});
+
+loadShows();
+</script>
+</body>
+</html>

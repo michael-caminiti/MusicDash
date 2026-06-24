@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MusicDash - Mood Board</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  nav a { margin-right: 1rem; text-decoration: none; color: #555; }
+  nav a.active { color: #111; font-weight: 600; }
+  .empty { color: #888; font-style: italic; }
+  .note { color: #888; font-size: 0.9rem; margin-bottom: 1.5rem; }
+  .grid { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .grid figure { margin: 0; width: 100px; }
+  .grid img { width: 100px; height: 100px; object-fit: cover; border-radius: 4px; display: block; }
+  .grid figcaption { font-size: 0.7rem; color: #666; margin-top: 0.2rem; line-height: 1.2; }
+  .swatch { width: 100px; height: 6px; border-radius: 3px; margin-top: 0.2rem; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Current Taste</a>
+  <a href="/genres">Genre Trends</a>
+  <a href="/artists">Top Artists</a>
+  <a href="/reviews">Reviews</a>
+  <a href="/playlists">Playlists</a>
+  <a href="/purchase">Purchase</a>
+  <a href="/collection">Collection</a>
+  <a href="/ask">Ask</a>
+  <a href="/recent">Recent</a>
+  <a href="/moodboard" class="active">Mood Board</a>
+  <a href="/shows">Shows</a>
+</nav>
+<h1>Cover Art Mood Board</h1>
+<p class="note">Album art from "2026 Finds," sorted by dominant color. A fun visual artifact, not a claim that your visual taste correlates with your sonic taste.</p>
+<div id="grid" class="grid"></div>
+
+<script>
+async function load() {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '<p class="empty">Loading...</p>';
+  try {
+    const res = await fetch('/api/moodboard');
+    const items = await res.json();
+    if (!items.length) {
+      grid.innerHTML = '<p class="empty">No album art cached yet — visit the Purchase tab and click Refresh first.</p>';
+      return;
+    }
+    grid.innerHTML = items.map(i => `
+      <figure>
+        <img src="${i.image_url}" alt="${i.album}" loading="lazy">
+        <div class="swatch" style="background:${i.dominant_color_hex};"></div>
+        <figcaption>${i.artist} — ${i.album}</figcaption>
+      </figure>
+    `).join('');
+  } catch (e) {
+    grid.innerHTML = '<p class="empty">Failed to load mood board.</p>';
+  }
+}
+load();
+</script>
+</body>
+</html>

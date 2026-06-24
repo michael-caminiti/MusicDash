@@ -28,6 +28,8 @@
   <a href="/collection">Collection</a>
   <a href="/ask">Ask</a>
   <a href="/recent">Recent</a>
+  <a href="/moodboard">Mood Board</a>
+  <a href="/shows">Shows</a>
 </nav>
 <h1>Top Artists (by scrobble count)</h1>
 <div class="controls">
@@ -38,6 +40,7 @@
       <option value="all" selected>All time</option>
     </select>
   </label>
+  <button id="sync-live" type="button">Sync Live Plays</button>
 </div>
 <canvas id="chart" height="120"></canvas>
 <ul class="artist-list" id="artist-list"></ul>
@@ -87,8 +90,21 @@ async function loadImages(artists) {
   }
 }
 
+async function syncLive() {
+  try {
+    await fetch('/api/scrobbles/sync-live', { method: 'POST' });
+  } catch (e) {
+    // Last.fm unreachable — fall back to whatever's already in the DB.
+  }
+}
+
 document.getElementById('period').addEventListener('change', load);
-load();
+document.getElementById('sync-live').addEventListener('click', async () => {
+  await syncLive();
+  load();
+});
+
+syncLive().then(load);
 </script>
 </body>
 </html>

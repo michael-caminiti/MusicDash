@@ -13,6 +13,12 @@
   #ask-form button { padding: 0.6rem 1.2rem; cursor: pointer; }
   .answer { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin-top: 1rem; white-space: pre-wrap; }
   .examples { color: #888; font-size: 0.85rem; margin-top: 0.5rem; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 0.75rem 1rem; margin-top: 1rem; }
+  .card .row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+  .card b { display: block; margin-bottom: 0.25rem; }
+  .card button { padding: 0.3rem 0.8rem; cursor: pointer; flex-shrink: 0; }
+  .idea-status { display: block; font-size: 0.85rem; margin-top: 0.4rem; color: #666; }
+  .idea-status a { color: #2a6; }
 </style>
 </head>
 <body>
@@ -25,6 +31,9 @@
   <a href="/purchase">Purchase</a>
   <a href="/collection">Collection</a>
   <a href="/ask" class="active">Ask</a>
+  <a href="/recent">Recent</a>
+  <a href="/moodboard">Mood Board</a>
+  <a href="/shows">Shows</a>
 </nav>
 <h1>Ask Your Listening History</h1>
 <p class="empty">Ask anything about your real scrobble history — time periods, artists, habit shifts.</p>
@@ -54,6 +63,44 @@ document.getElementById('ask-form').addEventListener('submit', async (e) => {
     const data = await res.json();
     if (!res.ok) {
       result.innerHTML = `<p class="empty">Error: ${data.detail || 'failed to get an answer'}</p>`;
+      return;
+    }
+    if (data.type === 'playlist_idea') {
+      result.innerHTML = `
+        <div class="card">
+          <div class="row">
+            <div><b>${data.idea.title}</b>${data.idea.description}</div>
+            <button id="create-asked-playlist">Create on Spotify</button>
+          </div>
+          <span class="idea-status" id="asked-playlist-status"></span>
+        </div>
+      `;
+      document.getElementById('create-asked-playlist').addEventListener('click', async (ev) => {
+        const status = document.getElementById('asked-playlist-status');
+        ev.target.disabled = true;
+        status.textContent = 'Creating...';
+        try {
+          const createRes = await fetch('/api/spotify/playlists/from-idea', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: data.idea.title, description: data.idea.description || '' }),
+          });
+          const createData = await createRes.json();
+          if (createRes.status === 401 && createData.auth_url) {
+            status.innerHTML = `Spotify isn't connected yet. <a href="${createData.auth_url}" target="_blank" rel="noopener">Connect Spotify</a>, then try again.`;
+            return;
+          }
+          if (!createRes.ok) {
+            status.textContent = `Error: ${createData.detail || 'failed to create playlist'}`;
+            return;
+          }
+          status.innerHTML = `Added ${createData.track_count} track${createData.track_count === 1 ? '' : 's'}. <a href="${createData.playlist_url}" target="_blank" rel="noopener">Open in Spotify</a>`;
+        } catch (err) {
+          status.textContent = 'Failed to create playlist.';
+        } finally {
+          ev.target.disabled = false;
+        }
+      });
       return;
     }
     result.innerHTML = `<div class="answer">${data.answer}</div>`;

@@ -34,6 +34,8 @@
   <a href="/collection">Collection</a>
   <a href="/ask">Ask</a>
   <a href="/recent">Recent</a>
+  <a href="/moodboard">Mood Board</a>
+  <a href="/shows">Shows</a>
 </nav>
 <h1>Current Taste Profile</h1>
 <button id="refresh-all">Refresh Everything</button><span id="refresh-status"></span>
@@ -80,10 +82,12 @@ async function load() {
               <div style="display:flex; gap:0.4rem; flex-shrink:0;">
                 <button class="create-playlist" data-idx="${idx}">Create on Spotify</button>
                 <button class="regenerate-playlist" data-idx="${idx}">Regenerate</button>
+                <button class="liner-notes" data-idx="${idx}">Liner Notes</button>
                 <button class="dismiss-idea" data-idx="${idx}">Dismiss</button>
               </div>
             </div>
             <span class="idea-status" id="idea-status-${idx}"></span>
+            <div id="liner-notes-${idx}"></div>
           </div>
         `).join('') || '<span class="empty">none</span>'}
         <details>
@@ -125,6 +129,9 @@ async function load() {
     });
     el.querySelectorAll('.dismiss-idea').forEach(btn => {
       btn.addEventListener('click', () => dismissIdea(p.playlist_ideas[btn.dataset.idx], btn));
+    });
+    el.querySelectorAll('.liner-notes').forEach(btn => {
+      btn.addEventListener('click', () => loadLinerNotes(p.playlist_ideas[btn.dataset.idx], btn));
     });
     document.getElementById('generate-idea').addEventListener('click', generateNewIdea);
     document.getElementById('run-audit').addEventListener('click', runAudit);
@@ -337,9 +344,36 @@ async function loadGenrePrimer(genre) {
       <div class="chips">${data.key_artists.map(a => `<span class="chip">${a}</span>`).join('')}</div>
       <p><b>Sonic signatures:</b></p>
       <ul>${data.sonic_signatures.map(s => `<li>${s}</li>`).join('')}</ul>
+      <button id="build-starter-pack">Build Starter Pack Playlist</button>
+      <span class="idea-status" id="starter-pack-status"></span>
     `;
+    document.getElementById('build-starter-pack').addEventListener('click', () => buildStarterPack(genre));
   } catch (e) {
     el.innerHTML = '<p class="empty">Failed to load genre primer.</p>';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function buildStarterPack(genre) {
+  const btn = document.getElementById('build-starter-pack');
+  const status = document.getElementById('starter-pack-status');
+  btn.disabled = true;
+  status.textContent = 'Building starter pack...';
+  try {
+    const res = await fetch(`/api/genre-primer/${encodeURIComponent(genre)}/starter-pack`, { method: 'POST' });
+    const data = await res.json();
+    if (res.status === 401 && data.auth_url) {
+      status.innerHTML = `Spotify isn't connected yet. <a href="${data.auth_url}" target="_blank" rel="noopener">Connect Spotify</a>, then try again.`;
+      return;
+    }
+    if (!res.ok) {
+      status.textContent = `Error: ${data.detail || 'failed to build starter pack'}`;
+      return;
+    }
+    status.innerHTML = `Added ${data.track_count} track${data.track_count === 1 ? '' : 's'}. <a href="${data.playlist_url}" target="_blank" rel="noopener">Open in Spotify</a>`;
+  } catch (e) {
+    status.textContent = 'Failed to build starter pack.';
   } finally {
     btn.disabled = false;
   }
@@ -477,6 +511,33 @@ async function dismissIdea(idea, btn) {
     loadDismissedIdeas();
   } catch (e) {
     status.textContent = 'Failed to dismiss.';
+    btn.disabled = false;
+  }
+}
+
+async function loadLinerNotes(idea, btn, regenerate) {
+  const el = document.getElementById(`liner-notes-${btn.dataset.idx}`);
+  btn.disabled = true;
+  el.innerHTML = '<p class="empty">Writing liner notes...</p>';
+  try {
+    const res = await fetch(`/api/playlist-ideas/liner-notes${regenerate ? '?regenerate=true' : ''}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: idea.title, description: idea.description || '' }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      el.innerHTML = `<p class="empty">Error: ${data.detail || 'failed to generate liner notes'}</p>`;
+      return;
+    }
+    el.innerHTML = `
+      <p style="white-space:pre-wrap;">${data.liner_notes}</p>
+      <button class="liner-notes-regenerate">Regenerate</button>
+    `;
+    el.querySelector('.liner-notes-regenerate').addEventListener('click', () => loadLinerNotes(idea, btn, true));
+  } catch (e) {
+    el.innerHTML = '<p class="empty">Failed to generate liner notes.</p>';
+  } finally {
     btn.disabled = false;
   }
 }
