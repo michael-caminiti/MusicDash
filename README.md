@@ -98,18 +98,9 @@ audit). Nothing requires the browser; any endpoint can be curled directly for sc
 
 ## Future ideas / phases under consideration
 
-Nothing below is scheduled — this is the running list of things that have come up as "could be cool"
-during development, roughly in order of how concrete they are:
-
-- **Ingest the Daily Pulse log into MusicDash.** Right now `/music-pulse` writes to a markdown file MusicDash never reads. A `/pulse` tab showing the recent entries (or a sparkline of volume/rotation-breadth over time) would close the loop.
-- **Surface the playlist-strategy stats in the UI.** `_category_rejection_rates`/`/api/spotify/playlists/strategy-stats` already tracks which search categories (seed artist, similar artist, genre tag, free text) get rejected most over time and auto-disables bad ones — there's no frontend view of this yet, just the raw endpoint.
-- **Surface the playlist audit in the UI.** `/api/spotify/playlists/audit` re-validates every previously-added track against current matching rules and flags drift, but today it's API-only — no page renders `flagged`/`count` for review.
-- **A real "taste drift over time" visualization** beyond the current genre-trend chart — e.g. defining-artist turnover, or a timeline combining weekly snapshots with daily-pulse new-artist flags.
-- **Discogs price-history tracking**, if a reliable enough source ever turns up — explicitly avoided so far because Discogs's own marketplace stats were found unreliable.
-- **Second-opinion gate beyond field-trip playlists** — currently only `from-genre-note` playlists get the Groq review; regular playlist-idea creation/regenerate doesn't, mostly because field-trip genres are the riskiest (most LLM-distilled, least user-curated) case.
-- **A second opinion *source*** beyond Groq/Llama, if quality ever becomes a problem again — kept cheap/free deliberately, revisit only if needed.
-- **Smarter purchase recommendations** — currently a single-hop Last.fm similar-artist expansion off the "2026 Finds" playlist; could incorporate Discogs wantlist/collection signal or genre-primer data once it exists for more artists.
-- **Audio-feature-based filtering** (e.g. prefer high-energy or low-valence tracks) — explicitly *not* currently buildable; Spotify's `/audio-features` and `/artists/{id}/top-tracks` are both locked behind extended-quota-mode restrictions for this app, so this is blocked until/unless that access changes.
+See [`FUTURE_IDEAS.md`](FUTURE_IDEAS.md) for the full running brainstorm pool (concert/live-music,
+physical media, taste intelligence, generative/creative, social, rituals, visualization, and
+infrastructure ideas) — nothing in it is scheduled.
 
 ## Known constraints worth knowing before changing things
 
