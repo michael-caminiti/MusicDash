@@ -149,6 +149,41 @@ CREATE TABLE IF NOT EXISTS field_trip_playlists (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS tour_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    artist TEXT NOT NULL,
+    event_name TEXT NOT NULL,
+    event_date TEXT NOT NULL,
+    venue TEXT,
+    city TEXT,
+    ticketmaster_url TEXT,
+    ticketmaster_id TEXT UNIQUE,
+    confidence TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'interested', 'going', 'passed')),
+    fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tour_events_date ON tour_events(event_date);
+
+CREATE TABLE IF NOT EXISTS playlist_liner_notes (
+    idea_title TEXT PRIMARY KEY,
+    liner_notes TEXT NOT NULL,
+    generated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS album_palette (
+    spotify_album_id TEXT PRIMARY KEY,
+    dominant_color_hex TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS discogs_collection_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    artist_norm TEXT NOT NULL,
+    title_norm TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_discogs_collection_cache_norm ON discogs_collection_cache(artist_norm, title_norm);
+
 CREATE TABLE IF NOT EXISTS ingest_log (
     file_path TEXT PRIMARY KEY,
     file_mtime TEXT NOT NULL,
@@ -171,6 +206,14 @@ def get_connection() -> sqlite3.Connection:
 COLUMN_MIGRATIONS = [
     ("playlist_idea_tracks", "category", "TEXT NOT NULL DEFAULT 'text_match'"),
     ("playlist_idea_tracks", "confidence", "REAL NOT NULL DEFAULT 0.4"),
+    ("purchase_items", "bandcamp_url", "TEXT"),
+    ("purchase_items", "bandcamp_item_id", "INTEGER"),
+    ("purchase_items", "bandcamp_item_type", "TEXT"),
+    ("purchase_items", "added_at", "TEXT"),
+    ("tour_events", "preshow_playlist_id", "TEXT"),
+    ("tour_events", "preshow_playlist_url", "TEXT"),
+    ("tour_events", "source", "TEXT NOT NULL DEFAULT 'ticketmaster'"),
+    ("tour_events", "songkick_uid", "TEXT"),
 ]
 
 

@@ -6,3 +6,4 @@ python-dotenv==1.0.1
 spotipy==2.24.0
 anthropic==0.40.0
 openai==2.43.0
+Pillow==12.2.0

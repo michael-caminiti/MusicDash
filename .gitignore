@@ -9,3 +9,4 @@ backend/dashboard.db
 *.zip
 *.log
 snapcheck.yml
+.playwright-cli/
